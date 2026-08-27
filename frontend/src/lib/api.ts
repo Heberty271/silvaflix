@@ -122,6 +122,8 @@ async function request<T>(
   token?: string | null
 ): Promise<T> {
   const headers: Record<string, string> = {
+    "bypass-tunnel-reminder": "true",
+    "Bypass-Tunnel-Reminder": "true",
     ...(options.headers as Record<string, string>),
   };
   if (!(options.body instanceof FormData)) {
