@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-void: #0a0a0c;
+  --color-panel: #141417;
+  --color-panel2: #1d1d22;
+  --color-rule: #2a2a31;
+  --color-brand: #e11d34;
+  --color-brand2: #ff4b5c;
+  --color-ink: #f3f3f5;
+  --color-mute: #9a9aa4;
+}
+
+[data-theme="amoled"] {
+  --color-void: #000000;
+  --color-panel: #0a0a0a;
+  --color-panel2: #141414;
+  --color-rule: #222222;
+  --color-brand: #e50914;
+  --color-brand2: #ff3344;
+  --color-ink: #ffffff;
+  --color-mute: #8e8e93;
+}
+
+[data-theme="cyberpunk"] {
+  --color-void: #0d0918;
+  --color-panel: #16102a;
+  --color-panel2: #21193d;
+  --color-rule: #36295e;
+  --color-brand: #a855f7;
+  --color-brand2: #06b6d4;
+  --color-ink: #f8fafc;
+  --color-mute: #94a3b8;
+}
+
+[data-theme="emerald"] {
+  --color-void: #04140e;
+  --color-panel: #0a241a;
+  --color-panel2: #103627;
+  --color-rule: #1c4d39;
+  --color-brand: #10b981;
+  --color-brand2: #34d399;
+  --color-ink: #ecfdf5;
+  --color-mute: #6ee7b7;
+}
+
+[data-theme="sunset"] {
+  --color-void: #140a08;
+  --color-panel: #241410;
+  --color-panel2: #331d17;
+  --color-rule: #4d2b22;
+  --color-brand: #f97316;
+  --color-brand2: #fb923c;
+  --color-ink: #fff7ed;
+  --color-mute: #fdba74;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink);
+}
+
+::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-rule);
+  border-radius: 8px;
+}
+
+::selection {
+  background-color: var(--color-brand);
+  color: #ffffff;
+}
+
+.input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--color-rule);
+  background-color: var(--color-void);
+  padding: 0.5rem 0.75rem;
+  color: var(--color-ink);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.input:focus {
+  border-color: var(--color-brand);
+}
+
+/* Esconde a barra de rolagem das fileiras horizontais */
+.scroll-row {
+  scrollbar-width: thin;
+}
+
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: scale(1.04);
+  z-index: 10;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .card-hover:hover {
+    transform: none;
+  }
+}
+
+/* Estilos para Navegação em Smart TV (D-Pad / Controle Remoto) */
+.tv-mode-active {
+  font-size: 1.08rem;
+}
+
+.tv-mode-active button,
+.tv-mode-active a {
+  cursor: pointer;
+}
+
+/* Efeito de Foco Cinematográfico para Controle Remoto */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--color-brand) !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 20px var(--color-brand2) !important;
+  transform: scale(1.03);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, outline 0.15s ease;
+  z-index: 30;
+}
+
+.card-hover:focus-visible {
+  transform: scale(1.08) !important;
+}
+
+/* Animações e Efeitos */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.9; }
+}
+
+.animate-glow {
+  animation: pulse-glow 3s infinite ease-in-out;
+}

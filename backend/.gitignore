@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+streaming.db
+media/movies/*
+!media/movies/.gitkeep
+media/thumbnails/*
+!media/thumbnails/.gitkeep
+venv/
