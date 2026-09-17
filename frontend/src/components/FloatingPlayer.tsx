@@ -49,6 +49,16 @@ export function FloatingPlayer() {
     return null;
   }
 
+  function handleClose() {
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    closeFloating();
+  }
+
   function handleExpand() {
     if (!movie) return;
     router.push(`/watch/${movie.id}`);
@@ -70,7 +80,7 @@ export function FloatingPlayer() {
             ⤢
           </button>
           <button
-            onClick={closeFloating}
+            onClick={handleClose}
             title="Fechar"
             className="flex h-6 w-6 items-center justify-center rounded text-xs text-mute hover:bg-panel2 hover:text-ink transition-colors"
           >

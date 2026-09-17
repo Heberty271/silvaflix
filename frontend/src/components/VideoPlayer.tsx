@@ -386,8 +386,16 @@ export function VideoPlayer({
       video.removeEventListener("ended", onEnded);
       saveProgress(movieId, video.currentTime, video.duration);
 
-      if (video && movie && video.currentTime > 5 && !video.ended) {
-        startFloating(movie, video.currentTime, !video.paused);
+      const shouldFloat = video && movie && video.currentTime > 5 && !video.ended && !video.paused;
+      if (shouldFloat) {
+        startFloating(movie, video.currentTime, true);
+      }
+
+      // Pausa e cancela o carregamento de rede pendente do vídeo para não travar outras abas/páginas
+      video.pause();
+      if (!shouldFloat) {
+        video.removeAttribute("src");
+        video.load();
       }
     };
   }, [movieId, movie, nextEpisode, router, startFloating]);
