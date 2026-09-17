@@ -323,15 +323,18 @@ def stream_movie(
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Arquivo de video ausente no disco")
 
-    # Se o usuário escolheu uma faixa de áudio específica (> 0), fazemos o remuxing com FFmpeg em tempo real
-    if audio_track is not None and audio_track > 0:
+    ext = os.path.splitext(file_path)[1].lower()
+    needs_remux = ext in (".mkv", ".avi", ".ts", ".wmv", ".flv", ".mov", ".vob") or (audio_track is not None and audio_track > 0)
+
+    if needs_remux:
         ffmpeg_bin = get_ffmpeg_binary()
+        track_to_use = audio_track if (audio_track is not None and audio_track >= 0) else 0
         cmd = [
             ffmpeg_bin,
             "-hide_banner",
             "-i", file_path,
             "-map", "0:v:0",
-            "-map", f"0:a:{audio_track}",
+            "-map", f"0:a:{track_to_use}",
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",

@@ -1,4 +1,51 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const NPOINT_BRIDGE_URL = "https://api.npoint.io/a008871770ac1c671939";
+
+let cachedApiUrl: string =
+  (typeof window !== "undefined" && window.localStorage.getItem("silvaflix_api_url")) ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8000";
+
+let syncPromise: Promise<string> | null = null;
+
+export async function syncApiUrl(force = false): Promise<string> {
+  if (syncPromise && !force) return syncPromise;
+
+  syncPromise = (async () => {
+    try {
+      const res = await fetch(NPOINT_BRIDGE_URL, {
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.url && typeof data.url === "string" && data.url.startsWith("http")) {
+          cachedApiUrl = data.url.replace(/\/$/, "");
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("silvaflix_api_url", cachedApiUrl);
+          }
+        }
+      }
+    } catch {
+      // fallback to cachedApiUrl
+    }
+    return cachedApiUrl;
+  })();
+
+  return syncPromise;
+}
+
+// Initial background sync in browser
+if (typeof window !== "undefined") {
+  syncApiUrl();
+}
+
+export function getApiUrl(): string {
+  if (typeof window !== "undefined") {
+    const stored = window.localStorage.getItem("silvaflix_api_url");
+    if (stored) return stored;
+  }
+  return cachedApiUrl;
+}
 
 export type Role = "admin" | "viewer";
 
@@ -119,8 +166,11 @@ class ApiError extends Error {
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  token?: string | null
+  token?: string | null,
+  isRetry = false
 ): Promise<T> {
+  await syncApiUrl();
+  let baseUrl = getApiUrl();
   const headers: Record<string, string> = {
     "bypass-tunnel-reminder": "true",
     "Bypass-Tunnel-Reminder": "true",
@@ -133,10 +183,19 @@ async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, { ...options, headers });
+    res = await fetch(`${baseUrl}${path}`, { ...options, headers });
   } catch {
+    // If request failed (e.g. backend restarted with a new link), refresh from npoint and retry once!
+    if (!isRetry) {
+      try {
+        baseUrl = await syncApiUrl(true);
+        return await request<T>(path, options, token, true);
+      } catch {
+        // continue to throw below
+      }
+    }
     throw new ApiError(
-      `Não foi possível conectar ao servidor (${API_URL}). Verifique se o backend está rodando.`,
+      `Não foi possível conectar ao servidor (${baseUrl}). Verifique se o SilvaFlix está rodando.`,
       0
     );
   }
@@ -183,12 +242,12 @@ export const api = {
       params.set("audio_track", String(audioTrack));
     }
     const qs = params.toString();
-    return `${API_URL}/movies/${id}/stream${qs ? `?${qs}` : ""}`;
+    return `${getApiUrl()}/movies/${id}/stream${qs ? `?${qs}` : ""}`;
   },
 
-  thumbnailUrl: (id: number) => `${API_URL}/movies/${id}/thumbnail`,
-  backdropUrl: (id: number) => `${API_URL}/movies/${id}/backdrop`,
-  subtitleUrl: (id: number) => `${API_URL}/movies/${id}/subtitles`,
+  thumbnailUrl: (id: number) => `${getApiUrl()}/movies/${id}/thumbnail`,
+  backdropUrl: (id: number) => `${getApiUrl()}/movies/${id}/backdrop`,
+  subtitleUrl: (id: number) => `${getApiUrl()}/movies/${id}/subtitles`,
 
   getMovieTrailer: (movieId: number, token: string) =>
     request<{ trailer_youtube_id: string | null }>(`/movies/${movieId}/trailer`, {}, token),
@@ -226,8 +285,9 @@ export const api = {
     request<RoomState>(`/party/rooms/${roomId}`),
 
   getPartyWsUrl: (roomId: string) => {
-    const wsProto = API_URL.startsWith("https") ? "wss" : "ws";
-    const cleanUrl = API_URL.replace(/^https?:\/\//, "");
+    const baseUrl = getApiUrl();
+    const wsProto = baseUrl.startsWith("https") ? "wss" : "ws";
+    const cleanUrl = baseUrl.replace(/^https?:\/\//, "");
     return `${wsProto}://${cleanUrl}/party/ws/${roomId}`;
   },
 
