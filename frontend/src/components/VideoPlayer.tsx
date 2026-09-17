@@ -427,9 +427,10 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      video.play().catch(() =>
-        setError("O navegador bloqueou a reprodução automática. Clique novamente.")
-      );
+      setError(null);
+      video.play().catch(() => {
+        setPlaying(false);
+      });
     } else {
       video.pause();
     }
@@ -712,18 +713,22 @@ export function VideoPlayer({
         </button>
       )}
 
-      {/* Tela de Erro */}
+      {/* Mensagem de Erro com Botão de Tentar de Novo */}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/95 px-6 text-center z-30">
-          <p className="text-4xl text-brand">⚠</p>
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-black/90 p-6 text-center">
+          <span className="text-4xl text-brand">⚠️</span>
           <p className="max-w-md text-sm text-mute">{error}</p>
           <button
             onClick={() => {
               setError(null);
               setLoading(true);
-              videoRef.current?.load();
+              const v = videoRef.current;
+              if (v) {
+                v.load();
+                v.play().catch(() => setPlaying(false));
+              }
             }}
-            className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+            className="cursor-pointer rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
           >
             Tentar de novo
           </button>
