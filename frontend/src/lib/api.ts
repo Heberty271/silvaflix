@@ -1,8 +1,24 @@
 const NPOINT_BRIDGE_URL = "https://api.npoint.io/a008871770ac1c671939";
 
+function cleanUrl(url?: string | null): string {
+  if (!url) return "";
+  const trimmed = url.trim().replace(/\/$/, "");
+  if (trimmed.includes("loca.lt") || trimmed.includes("ngrok") || trimmed.includes("teste.")) {
+    return "";
+  }
+  return trimmed;
+}
+
+if (typeof window !== "undefined") {
+  const raw = window.localStorage.getItem("silvaflix_api_url");
+  if (raw && !cleanUrl(raw)) {
+    window.localStorage.removeItem("silvaflix_api_url");
+  }
+}
+
 let cachedApiUrl: string =
-  (typeof window !== "undefined" && window.localStorage.getItem("silvaflix_api_url")) ||
-  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" && cleanUrl(window.localStorage.getItem("silvaflix_api_url"))) ||
+  cleanUrl(process.env.NEXT_PUBLIC_API_URL) ||
   "http://localhost:8000";
 
 let syncPromise: Promise<string> | null = null;
@@ -18,8 +34,9 @@ export async function syncApiUrl(force = false): Promise<string> {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data && data.url && typeof data.url === "string" && data.url.startsWith("http")) {
-          cachedApiUrl = data.url.replace(/\/$/, "");
+        const validUrl = cleanUrl(data?.url);
+        if (validUrl && validUrl.startsWith("http")) {
+          cachedApiUrl = validUrl;
           if (typeof window !== "undefined") {
             window.localStorage.setItem("silvaflix_api_url", cachedApiUrl);
           }
@@ -41,7 +58,7 @@ if (typeof window !== "undefined") {
 
 export function getApiUrl(): string {
   if (typeof window !== "undefined") {
-    const stored = window.localStorage.getItem("silvaflix_api_url");
+    const stored = cleanUrl(window.localStorage.getItem("silvaflix_api_url"));
     if (stored) return stored;
   }
   return cachedApiUrl;

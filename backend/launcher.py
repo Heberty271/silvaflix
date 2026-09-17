@@ -67,7 +67,9 @@ def main():
     uvicorn_cmd = [
         sys.executable, "-m", "uvicorn", "app.main:app",
         "--host", "0.0.0.0",
-        "--port", "8000"
+        "--port", "8000",
+        "--limit-concurrency", "200",
+        "--timeout-keep-alive", "30"
     ]
     backend_proc = subprocess.Popen(
         uvicorn_cmd,

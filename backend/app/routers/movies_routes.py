@@ -342,15 +342,21 @@ def stream_movie(
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
             "pipe:1",
         ]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=CHUNK_SIZE)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
 
         def iter_ffmpeg():
             try:
-                while chunk := process.stdout.read(CHUNK_SIZE):
+                while True:
+                    chunk = process.stdout.read(65536)
+                    if not chunk:
+                        break
                     yield chunk
             finally:
-                process.terminate()
-                process.wait()
+                try:
+                    process.terminate()
+                    process.kill()
+                except Exception:
+                    pass
 
         return StreamingResponse(iter_ffmpeg(), media_type="video/mp4")
 
