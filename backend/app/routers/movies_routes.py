@@ -5,13 +5,12 @@ import subprocess
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Response
-from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
-import httpx
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, tmdb
 from ..auth import get_current_user, require_admin
-from ..config import MEDIA_MOVIES_DIR, MEDIA_THUMBS_DIR, TMDB_API_KEY
+from ..config import MEDIA_MOVIES_DIR, MEDIA_THUMBS_DIR
 from ..database import get_db
 from ..audio_utils import probe_audio_tracks, get_ffmpeg_binary
 
@@ -165,23 +164,8 @@ def get_movie_audio_tracks(
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_external or (movie.filename and movie.filename.startswith("http")) or (movie.video_url and movie.video_url.startswith("http")):
-        return [{
-            "index": 0,
-            "title": "Áudio Principal (Web)",
-            "language": "por",
-            "language_name": "Português",
-            "flag": "🇧🇷",
-            "codec": "aac",
-            "is_default": True
-        }]
-    try:
-        file_path = _resolve_media_path(movie.filename)
-        if not os.path.isfile(file_path):
-            return []
-        return probe_audio_tracks(file_path)
-    except Exception:
-        return []
+    file_path = _resolve_media_path(movie.filename)
+    return probe_audio_tracks(file_path)
 
 
 @router.get("/movies/{movie_id}/thumbnail")
@@ -189,8 +173,6 @@ def get_thumbnail(movie_id: int, db: Session = Depends(get_db)):
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie or not movie.thumbnail_filename:
         raise HTTPException(status_code=404, detail="Capa nao encontrada")
-    if movie.thumbnail_filename.startswith("http://") or movie.thumbnail_filename.startswith("https://"):
-        return RedirectResponse(url=movie.thumbnail_filename)
     path = os.path.join(MEDIA_THUMBS_DIR, movie.thumbnail_filename)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Arquivo de capa ausente no disco")
@@ -202,8 +184,6 @@ def get_backdrop(movie_id: int, db: Session = Depends(get_db)):
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie or not movie.backdrop_filename:
         raise HTTPException(status_code=404, detail="Imagem de fundo nao encontrada")
-    if movie.backdrop_filename.startswith("http://") or movie.backdrop_filename.startswith("https://"):
-        return RedirectResponse(url=movie.backdrop_filename)
     path = os.path.join(MEDIA_THUMBS_DIR, movie.backdrop_filename)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Arquivo de imagem ausente no disco")
@@ -293,10 +273,8 @@ def get_movie_subtitles(movie_id: int, db: Session = Depends(get_db)):
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_external or (movie.filename and movie.filename.startswith("http")) or (movie.video_url and movie.video_url.startswith("http")):
-        raise HTTPException(status_code=404, detail="Nenhuma legenda local para stream externo")
 
-    file_path = _resolve_media_path(movie.filename)
+    movie_path = _resolve_media_path(movie.filename)
     base_no_ext = os.path.splitext(movie_path)[0]
 
     candidates = [
@@ -334,19 +312,12 @@ def stream_movie(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Envia o video em pedacos (HTTP Range Requests), remuxa em tempo real ou redireciona stream externo."""
+    """Envia o video em pedacos (HTTP Range Requests) ou remuxa em tempo real a faixa de audio selecionada."""
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
     if movie.is_private and current_user.role != models.RoleEnum.admin:
         raise HTTPException(status_code=403, detail="Este conteudo e privado")
-
-    # Suporte a Stream Externo / VOD Web
-    target_url = movie.video_url or (movie.filename if movie.filename and movie.filename.startswith("http") else None)
-    if movie.is_external or target_url:
-        if target_url:
-            return RedirectResponse(url=target_url, status_code=307)
-        raise HTTPException(status_code=400, detail="URL de streaming externo não encontrada")
 
     file_path = _resolve_media_path(movie.filename)
     if not os.path.isfile(file_path):
@@ -436,42 +407,6 @@ def stream_movie(
         "Content-Type": "video/mp4",
     }
     return StreamingResponse(range_iter(), status_code=206, headers=headers, media_type="video/mp4")
-
-
-@router.get("/movies/{movie_id}/proxy-stream")
-async def proxy_stream_movie(
-    movie_id: int,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    """Proxy reverso para streams externos caso o navegador bloqueie por CORS ou Mixed Content."""
-    movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
-    if not movie:
-        raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_private and current_user.role != models.RoleEnum.admin:
-        raise HTTPException(status_code=403, detail="Este conteudo e privado")
-
-    target_url = movie.video_url or (movie.filename if movie.filename and movie.filename.startswith("http") else None)
-    if not target_url:
-        raise HTTPException(status_code=400, detail="Este filme nao possui URL externa")
-
-    client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-    try:
-        req = client.build_request("GET", target_url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        })
-        resp = await client.send(req, stream=True)
-        return StreamingResponse(
-            resp.aiter_bytes(),
-            status_code=resp.status_code,
-            headers={k: v for k, v in resp.headers.items() if k.lower() in ("content-type", "content-length", "accept-ranges")},
-            media_type=resp.headers.get("content-type", "video/mp4"),
-            background=client.aclose,
-        )
-    except Exception as e:
-        await client.aclose()
-        raise HTTPException(status_code=502, detail=f"Erro ao conectar ao stream externo: {str(e)}")
 
 
 # ---------------------- Rotas administrativas (CMS) ----------------------
@@ -813,333 +748,3 @@ def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
 @admin_router.get("/users", response_model=list[schemas.UserOut])
 def list_users(db: Session = Depends(get_db)):
     return db.query(models.User).order_by(models.User.created_at.desc()).all()
-
-
-# ---------------------- Importação de Filmes Web e Lote ----------------------
-
-@admin_router.post("/movies/from-url", response_model=schemas.MovieOut)
-async def create_movie_from_url(
-    payload: schemas.MovieFromUrlCreate,
-    db: Session = Depends(get_db),
-):
-    """Cadastra um filme/episódio diretamente a partir de um link de vídeo externo (MP4, MKV, M3U8, etc.)."""
-    video_url = payload.video_url.strip()
-    if not video_url or not (video_url.startswith("http://") or video_url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="Informe uma URL de vídeo válida (iniciando com http:// ou https://)")
-
-    details = None
-    if payload.tmdb_id:
-        try:
-            details = await tmdb.get_movie_details(payload.tmdb_id)
-        except Exception:
-            pass
-
-    title = payload.title
-    year = payload.year
-    synopsis = payload.synopsis or ""
-    genre = payload.genre
-    director = payload.director
-    cast = payload.cast
-    duration_minutes = payload.duration_minutes
-    poster_url = payload.poster_url
-    backdrop_url = payload.backdrop_url
-    collection_name = None
-    trailer_id = payload.trailer_youtube_id
-
-    if details:
-        title = title or details["title"]
-        year = year or details["year"]
-        synopsis = synopsis or details["synopsis"]
-        genre = genre or details["genre"]
-        director = director or details.get("director")
-        cast = cast or details.get("cast")
-        duration_minutes = duration_minutes or details.get("duration_minutes")
-        poster_url = poster_url or details.get("poster_url")
-        backdrop_url = backdrop_url or details.get("backdrop_url")
-        collection_name = details.get("collection_name")
-        trailer_id = trailer_id or details.get("trailer_youtube_id")
-
-    if not title:
-        url_path = video_url.split("?")[0].split("#")[0]
-        url_filename = os.path.basename(url_path)
-        clean_name, extracted_year = clean_filename_for_search(url_filename)
-        title = clean_name.title() or "Filme Web"
-        year = year or extracted_year
-
-    movie = models.Movie(
-        title=title,
-        synopsis=synopsis,
-        year=year,
-        genre=genre,
-        duration_minutes=duration_minutes,
-        director=director,
-        cast=cast,
-        filename=video_url,
-        video_url=video_url,
-        is_external=True,
-        source_name=payload.source_name or "Link Web",
-        is_private=payload.is_private,
-        is_series=payload.is_series,
-        series_title=payload.series_title,
-        season_number=payload.season_number,
-        episode_number=payload.episode_number,
-        collection_name=collection_name,
-        trailer_youtube_id=trailer_id,
-        thumbnail_filename=poster_url,
-        backdrop_filename=backdrop_url,
-    )
-    db.add(movie)
-    db.commit()
-    db.refresh(movie)
-
-    if poster_url and poster_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
-        try:
-            image_bytes = await tmdb.download_poster(poster_url)
-            thumb_name = f"movie_{movie.id}.jpg"
-            with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
-                f.write(image_bytes)
-            movie.thumbnail_filename = thumb_name
-            db.commit()
-            db.refresh(movie)
-        except Exception:
-            pass
-
-    if backdrop_url and backdrop_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
-        try:
-            image_bytes = await tmdb.download_poster(backdrop_url)
-            bg_name = f"movie_{movie.id}_bg.jpg"
-            with open(os.path.join(MEDIA_THUMBS_DIR, bg_name), "wb") as f:
-                f.write(image_bytes)
-            movie.backdrop_filename = bg_name
-            db.commit()
-            db.refresh(movie)
-        except Exception:
-            pass
-
-    return movie
-
-
-@admin_router.post("/movies/parse-m3u", response_model=schemas.ParseMovieM3UResponse)
-async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
-    """Analisa uma lista M3U (URL ou arquivo) e extrai os títulos de filmes/VOD, categorias e links."""
-    content = payload.content
-    if payload.url and not content:
-        url = payload.url.strip()
-        try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                resp = await client.get(url, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                })
-                resp.raise_for_status()
-                content = resp.text
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Erro ao baixar lista M3U: {str(e)}")
-
-    if not content:
-        raise HTTPException(status_code=400, detail="Nenhum conteúdo ou link M3U fornecido")
-
-    lines = content.splitlines()
-    items: list[schemas.ParsedMovieItem] = []
-    category_counts: dict[str, int] = {}
-    current_meta: dict = {}
-
-    for line in lines:
-        line_str = line.strip()
-        if not line_str:
-            continue
-        if line_str.startswith("#EXTINF:"):
-            group_match = re.search(r'group-title="([^"]*)"', line_str, re.IGNORECASE)
-            logo_match = re.search(r'tvg-logo="([^"]*)"', line_str, re.IGNORECASE)
-            name_match = re.search(r',([^,]+)$', line_str)
-
-            raw_cat = group_match.group(1).strip() if group_match else "Filmes"
-            logo = logo_match.group(1).strip() if logo_match else None
-            name = name_match.group(1).strip() if name_match else "Filme"
-
-            current_meta = {
-                "name": name,
-                "category": raw_cat or "Filmes",
-                "logo": logo,
-            }
-        elif not line_str.startswith("#") and current_meta:
-            video_url = line_str
-            raw_title = current_meta.get("name", "Filme")
-            category = current_meta.get("category", "Filmes")
-            logo = current_meta.get("logo")
-
-            clean_name, year = clean_filename_for_search(raw_title)
-
-            category_counts[category] = category_counts.get(category, 0) + 1
-            items.append(schemas.ParsedMovieItem(
-                title=raw_title,
-                video_url=video_url,
-                category=category,
-                poster_url=logo,
-                clean_title=clean_name,
-                year=year,
-            ))
-            current_meta = {}
-
-    sorted_cats = [
-        schemas.CategoryWithCount(category=cat, count=cnt)
-        for cat, cnt in sorted(category_counts.items(), key=lambda x: -x[1])
-    ]
-
-    return schemas.ParseMovieM3UResponse(
-        total=len(items),
-        categories=sorted_cats,
-        items=items,
-    )
-
-
-@admin_router.post("/movies/batch-import")
-async def batch_import_movies(
-    payload: schemas.BatchMovieImportRequest,
-    db: Session = Depends(get_db),
-):
-    """Importa uma lista de filmes em massa da internet com busca inteligente opcional no TMDB."""
-    items = payload.items
-    if not items:
-        raise HTTPException(status_code=400, detail="Nenhum item fornecido para importação")
-
-    added = 0
-    errors = 0
-    results = []
-
-    for item in items:
-        video_url = item.video_url.strip()
-        if not video_url:
-            continue
-
-        raw_title = item.title or os.path.basename(video_url.split("?")[0])
-        clean_name, year = clean_filename_for_search(raw_title)
-
-        synopsis = ""
-        genre = item.category or "Geral"
-        director = None
-        cast = None
-        duration_minutes = None
-        poster_url = item.poster_url
-        backdrop_url = None
-        collection_name = None
-        trailer_id = None
-        movie_title = clean_name.title() or raw_title
-
-        if payload.fetch_tmdb and TMDB_API_KEY:
-            try:
-                candidates = await tmdb.search_movies(clean_name)
-                if candidates:
-                    chosen = candidates[0]
-                    if year:
-                        for c in candidates:
-                            if c.year and str(year) in c.year:
-                                chosen = c
-                                break
-                    details = await tmdb.get_movie_details(chosen.tmdb_id)
-                    movie_title = details.get("title") or movie_title
-                    synopsis = details.get("synopsis") or ""
-                    year = details.get("year") or year
-                    genre = details.get("genre") or genre
-                    director = details.get("director")
-                    cast = details.get("cast")
-                    duration_minutes = details.get("duration_minutes")
-                    poster_url = details.get("poster_url") or poster_url
-                    backdrop_url = details.get("backdrop_url")
-                    collection_name = details.get("collection_name")
-                    trailer_id = details.get("trailer_youtube_id")
-            except Exception:
-                pass
-
-        try:
-            movie = models.Movie(
-                title=movie_title,
-                synopsis=synopsis,
-                year=year,
-                genre=genre,
-                duration_minutes=duration_minutes,
-                director=director,
-                cast=cast,
-                filename=video_url,
-                video_url=video_url,
-                is_external=True,
-                source_name=payload.source_name or "Importação Web",
-                is_private=payload.is_private,
-                collection_name=collection_name,
-                trailer_youtube_id=trailer_id,
-                thumbnail_filename=poster_url,
-                backdrop_filename=backdrop_url,
-            )
-            db.add(movie)
-            db.commit()
-            db.refresh(movie)
-
-            # Baixa poster localmente se possível
-            if poster_url and poster_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
-                try:
-                    img_data = await tmdb.download_poster(poster_url)
-                    thumb_name = f"movie_{movie.id}.jpg"
-                    with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
-                        f.write(img_data)
-                    movie.thumbnail_filename = thumb_name
-                    db.commit()
-                except Exception:
-                    pass
-
-            added += 1
-            results.append({"id": movie.id, "title": movie.title, "status": "added"})
-        except Exception as e:
-            errors += 1
-            results.append({"url": video_url, "status": "error", "error": str(e)})
-
-    return {
-        "total": len(items),
-        "added": added,
-        "errors": errors,
-        "results": results,
-    }
-
-
-@admin_router.post("/movies/bulk-delete")
-def bulk_delete_movies(payload: schemas.BulkDeleteMoviesRequest, db: Session = Depends(get_db)):
-    """Exclui múltiplos filmes selecionados por ID."""
-    if not payload.movie_ids:
-        return {"deleted": 0}
-    deleted = db.query(models.Movie).filter(models.Movie.id.in_(payload.movie_ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"deleted": deleted}
-
-
-@admin_router.post("/movies/delete-by-source")
-def delete_movies_by_source(payload: schemas.DeleteMoviesBySourceRequest, db: Session = Depends(get_db)):
-    """Exclui todos os filmes vinculados a uma fonte ou lista específica."""
-    deleted = db.query(models.Movie).filter(models.Movie.source_name == payload.source_name).delete(synchronize_session=False)
-    db.commit()
-    return {"deleted": deleted, "source_name": payload.source_name}
-
-
-@router.get("/movies/sources")
-def list_movie_sources(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    """Lista todas as fontes de filmes registradas com suas respectivas contagens."""
-    from sqlalchemy import func
-    results = (
-        db.query(
-            models.Movie.source_name,
-            models.Movie.is_external,
-            func.count(models.Movie.id).label("count")
-        )
-        .group_by(models.Movie.source_name, models.Movie.is_external)
-        .all()
-    )
-
-    sources = []
-    for r in results:
-        name = r.source_name or ("Web / Link Externo" if r.is_external else "Servidor Local (Disco)")
-        sources.append({
-            "name": name,
-            "is_external": bool(r.is_external),
-            "count": r.count,
-        })
-    return sources
