@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import {
   api,
-  Movie,
   TMDBSearchResult,
   ParseMovieM3UResponse,
   MovieSource,
