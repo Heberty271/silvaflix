@@ -21,6 +21,10 @@ export function Navbar() {
             <Link href="/" className="text-mute hover:text-ink transition-colors">
               Catalogo
             </Link>
+            <Link href="/aovivo" className="text-mute hover:text-ink transition-colors flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              Ao Vivo
+            </Link>
             {user.role === "admin" && (
               <Link
                 href="/admin"

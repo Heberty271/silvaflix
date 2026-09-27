@@ -172,6 +172,36 @@ export interface RoomState {
   messages: ChatMessage[];
 }
 
+export interface Channel {
+  id: number;
+  name: string;
+  stream_url: string;
+  category: string;
+  logo_url?: string | null;
+  epg_id?: string | null;
+  is_custom: boolean;
+  user_id?: number | null;
+  is_active: boolean;
+  order: number;
+  created_at: string;
+}
+
+export interface ParsedChannel {
+  name: string;
+  stream_url: string;
+  category: string;
+  logo_url?: string | null;
+  epg_id?: string | null;
+}
+
+export interface XtreamResponse {
+  success: boolean;
+  server_info: Record<string, unknown>;
+  user_info: Record<string, unknown>;
+  channels_count: number;
+  channels: ParsedChannel[];
+}
+
 class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -433,6 +463,95 @@ export const api = {
     request<Movie>(
       "/admin/movies/from-tmdb",
       { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  // --- TV Ao Vivo & IPTV ---
+  listChannels: (token: string, category?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (category && category !== "Todos") params.set("category", category);
+    if (query) params.set("q", query);
+    const qs = params.toString();
+    return request<Channel[]>(`/live/channels${qs ? `?${qs}` : ""}`, {}, token);
+  },
+
+  listChannelCategories: (token: string) =>
+    request<string[]>("/live/channels/categories", {}, token),
+
+  getChannel: (id: number, token: string) =>
+    request<Channel>(`/live/channels/${id}`, {}, token),
+
+  parseM3U: (
+    payload: { url?: string; content?: string; category_override?: string },
+    token: string
+  ) =>
+    request<ParsedChannel[]>("/live/parse-m3u", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token),
+
+  connectXtream: (
+    payload: { server_url: string; username: string; password: string },
+    token: string
+  ) =>
+    request<XtreamResponse>("/live/xtream-connect", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token),
+
+  getLiveProxyUrl: (streamUrl: string) => {
+    return `${getApiUrl()}/live/proxy?url=${encodeURIComponent(streamUrl)}`;
+  },
+
+  createLiveChannel: (
+    payload: {
+      name: string;
+      stream_url: string;
+      category?: string;
+      logo_url?: string;
+      epg_id?: string;
+      order?: number;
+    },
+    token: string
+  ) =>
+    request<Channel>(
+      "/admin/live/channels",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  updateLiveChannel: (
+    id: number,
+    payload: Partial<Channel>,
+    token: string
+  ) =>
+    request<Channel>(
+      `/admin/live/channels/${id}`,
+      { method: "PUT", body: JSON.stringify(payload) },
+      token
+    ),
+
+  deleteLiveChannel: (id: number, token: string) =>
+    request<{ ok: boolean; message: string }>(
+      `/admin/live/channels/${id}`,
+      { method: "DELETE" },
+      token
+    ),
+
+  importM3U: (
+    payload: { url?: string; content?: string; category_override?: string },
+    token: string
+  ) =>
+    request<{ ok: boolean; imported_count: number; message: string }>(
+      "/admin/live/import-m3u",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  resetDefaultChannels: (token: string) =>
+    request<{ ok: boolean; message: string }>(
+      "/admin/live/reset-defaults",
+      { method: "POST" },
       token
     ),
 };

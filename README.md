@@ -13,14 +13,18 @@ completo e streaming eficiente via HTTP Range Requests.
 - **Início:** banner de destaque (marque um filme como "★ Destaque" no
   painel admin), fileira "Em alta", "Continue assistindo" (com barra de
   progresso) e uma fileira por gênero
-- **Sidebar:** Início, Filmes, Explorar (por gênero), Minha Lista, Histórico,
-  e a lista de categorias — tudo funcional, sem links decorativos
+- **Sidebar:** Início, TV Ao Vivo (📡), Filmes, Explorar & Busca, Meu Perfil, Minha Lista, Histórico e Categorias
+- **TV Ao Vivo & IPTV (Novo):**
+  - Grade de canais abertos e gratuitos pré-carregados (TV Brasil, TV Cultura, Record News, RedeTV!, Pluto TV canais, NASA TV, Red Bull TV, etc.)
+  - Transmissão e importação de listas IPTV personalizadas via URL M3U/M3U8, upload de arquivo de lista ou conexão direta com servidores Xtream Codes
+  - Player ao vivo HLS de baixa latência com modo Proxy Anti-Bloqueio/CORS automático
+  - Zapping rápido de canais (setas do teclado ou controle remoto) e sistema de canais Favoritos (★)
 - **Player customizado:** avançar/voltar 10s, velocidade de reprodução
   (0.5x–2x), Picture-in-Picture, atalhos de teclado (espaço = play/pause,
   ← → = avançar/voltar, ↑ ↓ = volume, M = mudo, F = tela cheia), retomar de
   onde parou automaticamente, indicador de carregamento e mensagens de erro
   claras se o vídeo não carregar
-- **"Minha lista" e "Histórico":** guardados no navegador de cada pessoa
+- **"Minha lista", "Favoritos de TV" e "Histórico":** guardados no navegador de cada pessoa
   (não exigem nada novo no backend)
 
 > **Nota técnica sobre autenticação de vídeo:** a tag `<video>` do navegador

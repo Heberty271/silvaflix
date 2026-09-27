@@ -5,7 +5,7 @@ from sqlalchemy import text
 from . import models, party
 from .database import engine
 from .config import CORS_ORIGINS
-from .routers import auth_routes, movies_routes
+from .routers import auth_routes, movies_routes, live_routes
 
 # 1. Cria tabelas caso nao existam
 models.Base.metadata.create_all(bind=engine)
@@ -52,6 +52,8 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(movies_routes.router)
 app.include_router(movies_routes.admin_router)
+app.include_router(live_routes.router)
+app.include_router(live_routes.admin_router)
 app.include_router(party.router)
 
 

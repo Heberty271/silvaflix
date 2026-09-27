@@ -139,3 +139,62 @@ class ReviewOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# TV Ao Vivo & IPTV
+class ChannelCreate(BaseModel):
+    name: str
+    stream_url: str
+    category: str = "Geral"
+    logo_url: Optional[str] = None
+    epg_id: Optional[str] = None
+    is_custom: bool = True
+    order: int = 0
+
+
+class ChannelUpdate(BaseModel):
+    name: Optional[str] = None
+    stream_url: Optional[str] = None
+    category: Optional[str] = None
+    logo_url: Optional[str] = None
+    epg_id: Optional[str] = None
+    is_active: Optional[bool] = None
+    order: Optional[int] = None
+
+
+class ChannelOut(BaseModel):
+    id: int
+    name: str
+    stream_url: str
+    category: str
+    logo_url: Optional[str] = None
+    epg_id: Optional[str] = None
+    is_custom: bool
+    user_id: Optional[int] = None
+    is_active: bool
+    order: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class M3UImportRequest(BaseModel):
+    url: Optional[str] = None
+    content: Optional[str] = None
+    category_override: Optional[str] = None
+
+
+class ParsedChannel(BaseModel):
+    name: str
+    stream_url: str
+    category: str = "Geral"
+    logo_url: Optional[str] = None
+    epg_id: Optional[str] = None
+
+
+class XtreamLoginRequest(BaseModel):
+    server_url: str
+    username: str
+    password: str
+

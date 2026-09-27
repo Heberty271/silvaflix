@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 
 const NAV_ITEMS = [
   { label: "Início", href: "/", icon: "🏠" },
+  { label: "TV Ao Vivo", href: "/aovivo", icon: "📡", isLive: true },
   { label: "Filmes", href: "/filmes", icon: "🎬" },
   { label: "Explorar & Busca", href: "/search", icon: "🔍" },
   { label: "Meu Perfil", href: "/profile", icon: "👤" },
@@ -14,7 +15,7 @@ const NAV_ITEMS = [
   { label: "Histórico", href: "/historico", icon: "🕘" },
 ];
 
-const DISABLED_ITEMS = [{ label: "Ao vivo", icon: "📡" }];
+const DISABLED_ITEMS: { label: string; icon: string }[] = [];
 
 const CATEGORIES = [
   "Ação",
@@ -61,14 +62,22 @@ function SidebarContent() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all ${
+                className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold transition-all ${
                   active
                     ? "bg-brand text-white shadow-md"
                     : "text-mute hover:bg-panel2 hover:text-ink"
                 }`}
               >
-                <span aria-hidden>{item.icon}</span>
-                {item.label}
+                <span className="flex items-center gap-3">
+                  <span aria-hidden>{item.icon}</span>
+                  {item.label}
+                </span>
+                {item.isLive && (
+                  <span className="flex items-center gap-1.5 rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-red-500 border border-red-500/30">
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                    Ao Vivo
+                  </span>
+                )}
               </Link>
             );
           })}

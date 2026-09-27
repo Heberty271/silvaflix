@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { api, Movie, User, ApiError, Role, TMDBSearchResult, AutoScanResponse, AdminStats } from "@/lib/api";
+import { api, Movie, User, Channel, ApiError, Role, TMDBSearchResult, AutoScanResponse, AdminStats } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
+import { IptvModal } from "@/components/IptvModal";
 
 export default function AdminPage() {
   const { token } = useAuth();
 
   const [movies, setMovies] = useState<Movie[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [isIptvModalOpen, setIsIptvModalOpen] = useState(false);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -47,16 +50,44 @@ export default function AdminPage() {
 
   async function refresh() {
     if (!token) return;
-    const [m, f, u, st] = await Promise.all([
+    const [m, f, u, st, ch] = await Promise.all([
       api.listMovies(token),
       api.availableFiles(token),
       api.listUsers(token),
       api.getAdminStats(token).catch(() => null),
+      api.listChannels(token).catch(() => []),
     ]);
     setMovies(m);
     setAvailableFiles(f);
     setUsers(u);
     setStats(st);
+    setChannels(ch);
+  }
+
+  async function handleDeleteLiveChannel(id: number) {
+    if (!token || !confirm("Deseja realmente remover este canal da transmissão ao vivo?")) return;
+    setError(null);
+    setMessage(null);
+    try {
+      await api.deleteLiveChannel(id, token);
+      setMessage("Canal removido com sucesso.");
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao remover canal");
+    }
+  }
+
+  async function handleResetDefaultChannels() {
+    if (!token || !confirm("Deseja restaurar todos os canais padrão gratuitos?")) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await api.resetDefaultChannels(token);
+      setMessage(res.message);
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao restaurar canais");
+    }
   }
 
   useEffect(() => {
@@ -619,7 +650,110 @@ export default function AdminPage() {
             ))}
           </ul>
         </section>
+
+        {/* Gestão de TV Ao Vivo & Listas IPTV */}
+        <section className="rounded-xl border border-rule bg-panel p-6 shadow-card">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <span>📡</span>
+                <span>TV Ao Vivo & Listas IPTV ({channels.length} canais)</span>
+              </h2>
+              <p className="text-xs text-mute mt-1">
+                Gerencie canais abertos, transmissões ao vivo e importe listas M3U ou servidores Xtream Codes.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setIsIptvModalOpen(true)}
+                className="rounded-lg bg-brand px-4 py-2 text-xs font-bold text-white hover:opacity-90 shadow transition-all"
+              >
+                ➕ Transmitir IPTV / Novo Canal
+              </button>
+              <button
+                onClick={handleResetDefaultChannels}
+                className="rounded-lg border border-rule bg-panel2 px-3 py-2 text-xs font-semibold text-mute hover:text-ink hover:border-brand transition-all"
+              >
+                🔄 Restaurar Padrões
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-panel2 text-xs uppercase text-mute">
+                <tr>
+                  <th className="px-4 py-3">Canal</th>
+                  <th className="px-4 py-3">Categoria</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Stream URL</th>
+                  <th className="px-4 py-3 text-right">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {channels.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-mute">
+                      Nenhum canal cadastrado no momento.
+                    </td>
+                  </tr>
+                ) : (
+                  channels.map((c) => (
+                    <tr key={c.id} className="hover:bg-panel2/40 transition-colors">
+                      <td className="px-4 py-3 font-semibold flex items-center gap-2">
+                        {c.logo_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={c.logo_url}
+                            alt=""
+                            className="h-6 w-6 object-contain rounded bg-black/40 p-0.5"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span>📡</span>
+                        )}
+                        <span>{c.name}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-mute">{c.category}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            c.is_custom
+                              ? "bg-purple-500/20 text-purple-400"
+                              : "bg-blue-500/20 text-blue-400"
+                          }`}
+                        >
+                          {c.is_custom ? "IPTV Custom" : "Gratuito"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 max-w-xs truncate text-xs text-mute font-mono">
+                        {c.stream_url}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => handleDeleteLiveChannel(c.id)}
+                          className="text-xs font-semibold text-brand2 hover:underline"
+                        >
+                          Remover
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </main>
+
+      <IptvModal
+        isOpen={isIptvModalOpen}
+        onClose={() => setIsIptvModalOpen(false)}
+        onSuccess={() => refresh()}
+      />
     </AppShell>
   );
 }

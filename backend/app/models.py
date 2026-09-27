@@ -66,3 +66,20 @@ class Review(Base):
     comment = Column(Text, nullable=False)
     has_spoiler = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Channel(Base):
+    __tablename__ = "channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    stream_url = Column(String, nullable=False)
+    category = Column(String, default="Geral", index=True)
+    logo_url = Column(String, nullable=True)
+    epg_id = Column(String, nullable=True)
+    is_custom = Column(Boolean, default=False, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
