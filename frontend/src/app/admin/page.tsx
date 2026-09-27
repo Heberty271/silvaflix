@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { api, Movie, User, Channel, ApiError, Role, TMDBSearchResult, AutoScanResponse, AdminStats } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 import { IptvModal } from "@/components/IptvModal";
+import { ImportMovieWebModal } from "@/components/ImportMovieWebModal";
 
 export default function AdminPage() {
   const { token } = useAuth();
@@ -12,6 +13,10 @@ export default function AdminPage() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isIptvModalOpen, setIsIptvModalOpen] = useState(false);
+  const [isWebMovieModalOpen, setIsWebMovieModalOpen] = useState(false);
+  const [selectedMovieIds, setSelectedMovieIds] = useState<Record<number, boolean>>({});
+  const [movieSourceFilter, setMovieSourceFilter] = useState<string>("all");
+  const [movieSearchQuery, setMovieSearchQuery] = useState<string>("");
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -226,6 +231,22 @@ export default function AdminPage() {
     refresh();
   }
 
+  async function handleBulkDeleteMovies() {
+    const ids = Object.entries(selectedMovieIds)
+      .filter(([_, v]) => v)
+      .map(([k]) => Number(k));
+    if (ids.length === 0) return;
+    if (!token || !confirm(`Tem certeza que deseja remover ${ids.length} filmes selecionados do catálogo?`)) return;
+    try {
+      const res = await api.bulkDeleteMovies(ids, token);
+      setMessage(`${res.deleted} filmes removidos com sucesso.`);
+      setSelectedMovieIds({});
+      refresh();
+    } catch (err: any) {
+      setError(err instanceof ApiError ? err.message : "Erro ao remover filmes.");
+    }
+  }
+
   async function handleThumbnail(movie: Movie, file: File | undefined) {
     if (!token || !file) return;
     await api.uploadThumbnail(movie.id, file, token);
@@ -237,6 +258,20 @@ export default function AdminPage() {
     await api.uploadBackdrop(movie.id, file, token);
     refresh();
   }
+
+  const filteredMovies = movies.filter((m) => {
+    if (movieSourceFilter === "web" && !m.is_external) return false;
+    if (movieSourceFilter === "local" && m.is_external) return false;
+    if (movieSearchQuery) {
+      const q = movieSearchQuery.toLowerCase();
+      if (!m.title.toLowerCase().includes(q) && !(m.genre || "").toLowerCase().includes(q) && !(m.source_name || "").toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const selectedCount = Object.values(selectedMovieIds).filter(Boolean).length;
 
   return (
     <AppShell requireAdmin showSearch={false}>
@@ -289,23 +324,32 @@ export default function AdminPage() {
                 baixa pôsteres e fundos em alta definição e cadastra tudo de uma só vez!
               </p>
             </div>
-            <button
-              onClick={handleAutoScan}
-              disabled={scanning}
-              className="flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-black text-white shadow-xl transition-all hover:scale-105 hover:bg-brand2 disabled:opacity-50"
-            >
-              {scanning ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  <span>Escaneando HD...</span>
-                </>
-              ) : (
-                <>
-                  <span>🚀</span>
-                  <span>Escanear Novos Filmes</span>
-                </>
-              )}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setIsWebMovieModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-5 py-3 font-black text-white shadow-xl transition-all hover:scale-105 hover:brightness-110"
+              >
+                <span>🌐</span>
+                <span>Adicionar Filmes da Web / Lista</span>
+              </button>
+              <button
+                onClick={handleAutoScan}
+                disabled={scanning}
+                className="flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-black text-white shadow-xl transition-all hover:scale-105 hover:bg-brand2 disabled:opacity-50"
+              >
+                {scanning ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>Escaneando HD...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🚀</span>
+                    <span>Escanear Novos Filmes</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {availableFiles.length > 0 && (
@@ -515,13 +559,65 @@ export default function AdminPage() {
         </section>
 
         {/* Lista de filmes */}
-        <section>
-          <h2 className="mb-4 text-xl font-bold">Catálogo ({movies.length})</h2>
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-ink">Catálogo ({filteredMovies.length} de {movies.length})</h2>
+              <p className="text-xs text-mute">Gerencie visibilidade, destaques, pôsteres e fontes de vídeo.</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {selectedCount > 0 && (
+                <button
+                  onClick={handleBulkDeleteMovies}
+                  className="flex items-center gap-2 rounded-xl bg-rose-500/20 border border-rose-500/40 px-4 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500 hover:text-white transition-all shadow"
+                >
+                  <span>🗑️</span>
+                  <span>Excluir Selecionados ({selectedCount})</span>
+                </button>
+              )}
+
+              <input
+                type="text"
+                placeholder="Filtrar por título..."
+                value={movieSearchQuery}
+                onChange={(e) => setMovieSearchQuery(e.target.value)}
+                className="rounded-xl border border-rule bg-panel px-3 py-2 text-xs text-ink placeholder-mute focus:border-brand focus:outline-none"
+              />
+
+              <select
+                value={movieSourceFilter}
+                onChange={(e) => setMovieSourceFilter(e.target.value)}
+                className="rounded-xl border border-rule bg-panel px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
+              >
+                <option value="all">Todas as Fontes ({movies.length})</option>
+                <option value="web">🌐 Apenas Web / Links ({movies.filter((m) => m.is_external).length})</option>
+                <option value="local">📁 Apenas Locais / HD ({movies.filter((m) => !m.is_external).length})</option>
+              </select>
+            </div>
+          </div>
+
           <div className="overflow-x-auto rounded-xl border border-rule bg-panel shadow-card">
             <table className="w-full text-sm">
-              <thead className="bg-panel2 text-left text-mute">
+              <thead className="bg-panel2 text-left text-mute text-xs">
                 <tr>
-                  <th className="px-4 py-3">Título</th>
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={filteredMovies.length > 0 && filteredMovies.every((m) => selectedMovieIds[m.id])}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        const next: Record<number, boolean> = { ...selectedMovieIds };
+                        filteredMovies.forEach((m) => {
+                          if (checked) next[m.id] = true;
+                          else delete next[m.id];
+                        });
+                        setSelectedMovieIds(next);
+                      }}
+                      className="h-4 w-4 rounded border-rule text-brand focus:ring-brand"
+                    />
+                  </th>
+                  <th className="px-4 py-3">Título & Origem</th>
                   <th className="px-4 py-3">Coleção / Franquia</th>
                   <th className="px-4 py-3">Visibilidade</th>
                   <th className="px-4 py-3">Destaque</th>
@@ -531,59 +627,96 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {movies.map((m) => (
-                  <tr key={m.id} className="border-t border-rule hover:bg-panel2/50">
-                    <td className="px-4 py-3 font-semibold">{m.title}</td>
-                    <td className="px-4 py-3 text-xs text-mute">{m.collection_name || "—"}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleTogglePrivacy(m)}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          m.is_private ? "bg-brand/20 text-brand2" : "bg-emerald-500/20 text-emerald-400"
-                        }`}
-                      >
-                        {m.is_private ? "Privado" : "Público"}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleToggleFeatured(m)}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          m.is_featured ? "bg-amber-500/20 text-amber-400 font-bold" : "bg-panel2 text-mute"
-                        }`}
-                      >
-                        {m.is_featured ? "★ Destaque" : "Marcar"}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <label className="cursor-pointer text-brand2 hover:underline">
-                        {m.thumbnail_filename ? "Trocar" : "Enviar"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleThumbnail(m, e.target.files?.[0])}
-                        />
-                      </label>
-                    </td>
-                    <td className="px-4 py-3">
-                      <label className="cursor-pointer text-brand2 hover:underline">
-                        {m.backdrop_filename ? "Trocar" : "Enviar"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleBackdrop(m, e.target.files?.[0])}
-                        />
-                      </label>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button onClick={() => handleDelete(m)} className="text-brand2 hover:underline">
-                        Remover
-                      </button>
+                {filteredMovies.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-xs text-mute">
+                      Nenhum filme encontrado com os filtros atuais.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredMovies.map((m) => (
+                    <tr key={m.id} className="border-t border-rule hover:bg-panel2/50 transition-colors">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={!!selectedMovieIds[m.id]}
+                          onChange={(e) =>
+                            setSelectedMovieIds((prev) => ({
+                              ...prev,
+                              [m.id]: e.target.checked,
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-rule text-brand focus:ring-brand"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-ink">{m.title}</span>
+                          <span
+                            className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold border ${
+                              m.is_external
+                                ? "bg-sky-500/15 border-sky-500/30 text-sky-400"
+                                : "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                            }`}
+                          >
+                            {m.is_external ? "🌐 Web" : "📁 Local"}
+                          </span>
+                        </div>
+                        {m.source_name && (
+                          <p className="text-[10px] text-mute">{m.source_name}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-mute">{m.collection_name || "—"}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleTogglePrivacy(m)}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            m.is_private ? "bg-brand/20 text-brand2" : "bg-emerald-500/20 text-emerald-400"
+                          }`}
+                        >
+                          {m.is_private ? "Privado" : "Público"}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleToggleFeatured(m)}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            m.is_featured ? "bg-amber-500/20 text-amber-400 font-bold" : "bg-panel2 text-mute"
+                          }`}
+                        >
+                          {m.is_featured ? "★ Destaque" : "Marcar"}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <label className="cursor-pointer text-brand2 hover:underline">
+                          {m.thumbnail_filename ? "Trocar" : "Enviar"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => handleThumbnail(m, e.target.files?.[0])}
+                          />
+                        </label>
+                      </td>
+                      <td className="px-4 py-3">
+                        <label className="cursor-pointer text-brand2 hover:underline">
+                          {m.backdrop_filename ? "Trocar" : "Enviar"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => handleBackdrop(m, e.target.files?.[0])}
+                          />
+                        </label>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button onClick={() => handleDelete(m)} className="text-brand2 hover:underline">
+                          Remover
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -752,6 +885,13 @@ export default function AdminPage() {
       <IptvModal
         isOpen={isIptvModalOpen}
         onClose={() => setIsIptvModalOpen(false)}
+        onSuccess={() => refresh()}
+      />
+
+      <ImportMovieWebModal
+        isOpen={isWebMovieModalOpen}
+        onClose={() => setIsWebMovieModalOpen(false)}
+        token={token || ""}
         onSuccess={() => refresh()}
       />
     </AppShell>

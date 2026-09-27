@@ -97,6 +97,10 @@ export interface Movie {
   collection_name?: string | null;
   trailer_youtube_id?: string | null;
 
+  video_url?: string | null;
+  is_external?: boolean;
+  source_name?: string | null;
+
   created_at: string;
 }
 
@@ -266,6 +270,67 @@ export interface XtreamResponse {
   categories?: Array<{ name: string; count: number }>;
   sample_channels?: ParsedChannel[];
   channels?: ParsedChannel[];
+}
+
+export interface MovieFromUrlCreate {
+  video_url: string;
+  title?: string;
+  tmdb_id?: number;
+  synopsis?: string;
+  year?: number;
+  genre?: string;
+  director?: string;
+  cast?: string;
+  duration_minutes?: number;
+  poster_url?: string;
+  backdrop_url?: string;
+  trailer_youtube_id?: string;
+  is_private?: boolean;
+  source_name?: string;
+  is_series?: boolean;
+  series_title?: string;
+  season_number?: number;
+  episode_number?: number;
+}
+
+export interface BatchMovieUrlItem {
+  video_url: string;
+  title?: string;
+  category?: string;
+  poster_url?: string;
+}
+
+export interface BatchMovieImportRequest {
+  items: BatchMovieUrlItem[];
+  source_name?: string;
+  fetch_tmdb?: boolean;
+  is_private?: boolean;
+}
+
+export interface ParseMovieM3URequest {
+  url?: string;
+  content?: string;
+}
+
+export interface ParsedMovieItem {
+  title: string;
+  video_url: string;
+  category: string;
+  poster_url?: string | null;
+  clean_title: string;
+  year?: number | null;
+}
+
+export interface ParseMovieM3UResponse {
+  total: number;
+  categories: CategoryWithCount[];
+  items: ParsedMovieItem[];
+}
+
+export interface MovieSource {
+  name: string;
+  is_external: boolean;
+  count: number;
 }
 
 class ApiError extends Error {
@@ -514,6 +579,50 @@ export const api = {
       { method: "PATCH" },
       token
     ),
+
+  // --- Filmes Web / Importação em Lote ---
+  createMovieFromUrl: (payload: MovieFromUrlCreate, token: string) =>
+    request<Movie>(
+      "/admin/movies/from-url",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  parseMovieM3U: (payload: ParseMovieM3URequest, token: string) =>
+    request<ParseMovieM3UResponse>(
+      "/admin/movies/parse-m3u",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  batchImportMovies: (payload: BatchMovieImportRequest, token: string) =>
+    request<{
+      total: number;
+      added: number;
+      errors: number;
+      results: Array<{ id?: number; title?: string; url?: string; status: string; error?: string }>;
+    }>(
+      "/admin/movies/batch-import",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  bulkDeleteMovies: (movie_ids: number[], token: string) =>
+    request<{ deleted: number }>(
+      "/admin/movies/bulk-delete",
+      { method: "POST", body: JSON.stringify({ movie_ids }) },
+      token
+    ),
+
+  deleteMoviesBySource: (source_name: string, token: string) =>
+    request<{ deleted: number; source_name: string }>(
+      "/admin/movies/delete-by-source",
+      { method: "POST", body: JSON.stringify({ source_name }) },
+      token
+    ),
+
+  listMovieSources: (token: string) =>
+    request<MovieSource[]>("/movies/sources", {}, token),
 
   uploadThumbnail: (movieId: number, file: File, token: string) => {
     const data = new FormData();

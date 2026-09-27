@@ -56,6 +56,10 @@ class MovieCreate(BaseModel):
     collection_name: Optional[str] = None
     trailer_youtube_id: Optional[str] = None
 
+    video_url: Optional[str] = None
+    is_external: bool = False
+    source_name: Optional[str] = None
+
 
 class MovieOut(BaseModel):
     id: int
@@ -81,6 +85,10 @@ class MovieOut(BaseModel):
     collection_name: Optional[str] = None
     trailer_youtube_id: Optional[str] = None
 
+    video_url: Optional[str] = None
+    is_external: bool = False
+    source_name: Optional[str] = None
+
     created_at: datetime
 
     class Config:
@@ -99,6 +107,72 @@ class MovieFromTMDB(BaseModel):
     tmdb_id: int
     filename: str
     is_private: bool = True
+    video_url: Optional[str] = None
+    is_external: bool = False
+    source_name: Optional[str] = None
+
+
+class MovieFromUrlCreate(BaseModel):
+    video_url: str
+    title: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    synopsis: Optional[str] = None
+    year: Optional[int] = None
+    genre: Optional[str] = None
+    director: Optional[str] = None
+    cast: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
+    trailer_youtube_id: Optional[str] = None
+    is_private: bool = False
+    source_name: Optional[str] = "Link Web"
+    is_series: bool = False
+    series_title: Optional[str] = None
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+
+
+class BatchMovieUrlItem(BaseModel):
+    video_url: str
+    title: Optional[str] = None
+    category: Optional[str] = None
+    poster_url: Optional[str] = None
+
+
+class BatchMovieImportRequest(BaseModel):
+    items: List[BatchMovieUrlItem]
+    source_name: Optional[str] = "Importação Web"
+    fetch_tmdb: bool = True
+    is_private: bool = False
+
+
+class ParseMovieM3URequest(BaseModel):
+    url: Optional[str] = None
+    content: Optional[str] = None
+
+
+class ParsedMovieItem(BaseModel):
+    title: str
+    video_url: str
+    category: str
+    poster_url: Optional[str] = None
+    clean_title: str
+    year: Optional[int] = None
+
+
+class ParseMovieM3UResponse(BaseModel):
+    total: int
+    categories: List[CategoryWithCount]
+    items: List[ParsedMovieItem]
+
+
+class BulkDeleteMoviesRequest(BaseModel):
+    movie_ids: List[int]
+
+
+class DeleteMoviesBySourceRequest(BaseModel):
+    source_name: str
 
 
 class MovieUpdate(BaseModel):
@@ -118,6 +192,9 @@ class MovieUpdate(BaseModel):
     episode_title: Optional[str] = None
     collection_name: Optional[str] = None
     trailer_youtube_id: Optional[str] = None
+    video_url: Optional[str] = None
+    is_external: Optional[bool] = None
+    source_name: Optional[str] = None
 
 
 # Resenhas Familiares

@@ -51,6 +51,11 @@ class Movie(Base):
     collection_name = Column(String, nullable=True)
     trailer_youtube_id = Column(String, nullable=True)
 
+    # Suporte a Filmes e Séries da Web / Links Externos (VOD / URLs)
+    video_url = Column(String, nullable=True)
+    is_external = Column(Boolean, default=False, nullable=False)
+    source_name = Column(String, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

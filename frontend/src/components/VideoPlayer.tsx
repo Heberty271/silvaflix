@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Hls from "hls.js";
 import { getProgress, setProgress as saveProgress } from "@/lib/watch-progress";
 import { Movie, AudioTrack } from "@/lib/api";
 import { useFloatingPlayer } from "@/lib/floating-player-context";
@@ -48,6 +49,7 @@ export function VideoPlayer({
   const router = useRouter();
   const { startFloating, closeFloating } = useFloatingPlayer();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hideTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -309,6 +311,56 @@ export function VideoPlayer({
     if (nextEpisodeTimer.current) clearInterval(nextEpisodeTimer.current);
     setNextCountdown(null);
   };
+
+  // --- Inicialização de Fonte HLS ou Vídeo Direto ---
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !src) return;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const isHls = src.includes(".m3u8") || movie?.video_url?.includes(".m3u8");
+
+    if (isHls && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        backBufferLength: 60,
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hlsRef.current = hls;
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else if (isHls && video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;
+    } else {
+      video.src = src;
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [src, movie?.video_url]);
 
   // --- eventos do <video> ---
   useEffect(() => {
@@ -651,7 +703,6 @@ export function VideoPlayer({
       {/* Elemento de Vídeo com Calibração */}
       <video
         ref={videoRef}
-        src={src}
         className="aspect-video w-full bg-black object-contain"
         style={{
           filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`,

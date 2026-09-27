@@ -29,6 +29,9 @@ def run_sqlite_migrations():
             ("episode_title", "VARCHAR"),
             ("collection_name", "VARCHAR"),
             ("trailer_youtube_id", "VARCHAR"),
+            ("video_url", "VARCHAR"),
+            ("is_external", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("source_name", "VARCHAR"),
         ]
         for col_name, col_type in new_movie_cols:
             if col_name not in existing_movie_cols:
