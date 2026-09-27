@@ -68,6 +68,19 @@ class Review(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Playlist(Base):
+    __tablename__ = "playlists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    url = Column(String, nullable=True)
+    type = Column(String, default="m3u")  # m3u, file, xtream, manual
+    channel_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    channels = relationship("Channel", back_populates="playlist", cascade="all, delete-orphan")
+
+
 class Channel(Base):
     __tablename__ = "channels"
 
@@ -78,8 +91,10 @@ class Channel(Base):
     logo_url = Column(String, nullable=True)
     epg_id = Column(String, nullable=True)
     is_custom = Column(Boolean, default=False, nullable=False)
+    playlist_id = Column(Integer, ForeignKey("playlists.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     order = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    playlist = relationship("Playlist", back_populates="channels")

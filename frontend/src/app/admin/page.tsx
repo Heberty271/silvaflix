@@ -55,7 +55,7 @@ export default function AdminPage() {
       api.availableFiles(token),
       api.listUsers(token),
       api.getAdminStats(token).catch(() => null),
-      api.listChannels(token).catch(() => []),
+      api.listChannels(token, { limit: 100 }).then((r) => r.items).catch(() => []),
     ]);
     setMovies(m);
     setAvailableFiles(f);

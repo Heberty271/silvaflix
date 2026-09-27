@@ -3,11 +3,13 @@ import re
 import urllib.parse
 from typing import List, Optional
 from datetime import datetime
+from collections import Counter
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text, func
 
 from .. import models, schemas
 from ..auth import get_current_user, require_admin
@@ -67,7 +69,7 @@ DEFAULT_FREE_CHANNELS = [
     },
     {
         "name": "SOU TV",
-        "category": "Variedades",
+        "category": "Entretenimento & Variedades",
         "stream_url": "https://video10.logicahost.com.br/soutv/soutv/playlist.m3u8",
         "logo_url": "",
         "epg_id": "SouTV.br",
@@ -75,7 +77,7 @@ DEFAULT_FREE_CHANNELS = [
     },
     {
         "name": "AgroCanal",
-        "category": "Variedades",
+        "category": "Entretenimento & Variedades",
         "stream_url": "https://aovivo.equipea.com.br:5443/aovivort/streams/pshRLrnv6isXq7RG4747567774043229.m3u8",
         "logo_url": "",
         "epg_id": "AgroCanal.br",
@@ -99,7 +101,7 @@ DEFAULT_FREE_CHANNELS = [
     },
     {
         "name": "Sony Channel HD",
-        "category": "Entretenimento",
+        "category": "Entretenimento & Variedades",
         "stream_url": "http://170.83.16.50/SONY_CHANNEL/index.m3u8",
         "logo_url": "",
         "epg_id": "SonyChannel.br",
@@ -123,7 +125,7 @@ DEFAULT_FREE_CHANNELS = [
     },
     {
         "name": "Terra Viva",
-        "category": "Variedades",
+        "category": "Entretenimento & Variedades",
         "stream_url": "http://45.177.114.115/TERRAVIVA/index.m3u8",
         "logo_url": "",
         "epg_id": "TerraViva.br",
@@ -131,13 +133,66 @@ DEFAULT_FREE_CHANNELS = [
     },
     {
         "name": "AgroMais HD",
-        "category": "Variedades",
+        "category": "Entretenimento & Variedades",
         "stream_url": "http://45.162.64.114/AGROMAIS/index.m3u8",
         "logo_url": "",
         "epg_id": "AgroMais.br",
         "order": 15,
     }
 ]
+
+
+def clean_category_name(raw: Optional[str]) -> str:
+    """Padroniza e organiza nomes de categorias caóticas de listas IPTV."""
+    if not raw:
+        return "Geral"
+    raw_clean = raw.strip()
+    raw_lower = raw_clean.lower()
+
+    if raw_lower in ["undefined", "null", "none", "unknown", "geral", "general", "outros", "iptv", "diversos", "sem categoria"]:
+        return "Geral"
+
+    tokens = [t.strip() for t in re.split(r'[;/|]', raw_clean) if t.strip()]
+
+    for token in (tokens if len(tokens) > 1 else [raw_clean]):
+        tok_lower = token.lower()
+
+        if any(k in tok_lower for k in ["kid", "infantil", "cartoon", "desenho", "disney", "nick", "gloob", "anime", "animation"]):
+            return "Infantil & Desenhos"
+
+        if any(k in tok_lower for k in ["aberto", "globo", "sbt", "record", "band", "brasil", "brazil", "redetv", "tv brasil"]):
+            return "Abertos / Brasil"
+
+        if any(k in tok_lower for k in ["sport", "esporte", "futebol", "premiere", "espn", "combate", "conmebol", "auto", "racing", "outdoor"]):
+            return "Esportes"
+
+        if any(k in tok_lower for k in ["filme", "movie", "cine", "telecine", "hbo", "series", "serie", "comedy", "classic", "drama", "action", "terror", "ficcao"]):
+            return "Filmes & Séries"
+
+        if any(k in tok_lower for k in ["noticia", "notícia", "news", "jornal", "dw", "cnn", "bandnews", "globonews", "business", "economia"]):
+            return "Notícias"
+
+        if any(k in tok_lower for k in ["music", "música", "musica", "clip", "mtv", "radio", "rádio", "som"]):
+            return "Música"
+
+        if any(k in tok_lower for k in ["documentar", "doc", "discovery", "history", "nat geo", "national geographic", "science", "ciencia", "ciência"]):
+            return "Documentários"
+
+        if any(k in tok_lower for k in ["cultura", "culture", "education", "educacao", "educação", "arte", "learn"]):
+            return "Cultura & Educação"
+
+        if any(k in tok_lower for k in ["legislativ", "senado", "camara", "câmara", "public", "governo"]):
+            return "Canais Públicos & Legislativos"
+
+        if any(k in tok_lower for k in ["religi", "gospel", "igreja", "catolic", "evang", "fe", "fé", "oracao"]):
+            return "Religiosos"
+
+        if any(k in tok_lower for k in ["variedade", "variety", "lifestyle", "shop", "travel", "cooking", "culinaria", "entretenimento", "entertainment", "family", "relax", "reality"]):
+            return "Entretenimento & Variedades"
+
+    first_token = tokens[0] if tokens else raw_clean
+    cleaned_str = re.sub(r'^[\[\(].*?[\]\)]', '', first_token).strip()
+    return cleaned_str.title() if cleaned_str else "Geral"
 
 
 def seed_default_channels_if_empty(db: Session):
@@ -151,25 +206,16 @@ def seed_default_channels_if_empty(db: Session):
                 logo_url=ch.get("logo_url"),
                 epg_id=ch.get("epg_id"),
                 is_custom=False,
+                playlist_id=None,
                 order=ch.get("order", 0),
                 is_active=True,
             )
             db.add(db_ch)
         db.commit()
-    else:
-        # Atualiza canais padrão não customizados se a URL foi aprimorada
-        default_names = {c["name"]: c for c in DEFAULT_FREE_CHANNELS}
-        existing = db.query(models.Channel).filter(models.Channel.is_custom == False).all()
-        for ex in existing:
-            if ex.name in default_names:
-                match = default_names[ex.name]
-                ex.stream_url = match["stream_url"]
-                ex.category = match.get("category", ex.category)
-        db.commit()
 
 
-def parse_m3u_text(content: str, default_category: str = "IPTV") -> List[dict]:
-    """Parse robusto de listas M3U/M3U8 com metadados do #EXTINF."""
+def parse_m3u_text(content: str, default_category: str = "Geral") -> List[dict]:
+    """Parse robusto e otimizado de listas M3U/M3U8 com metadados do #EXTINF."""
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     channels = []
     
@@ -180,28 +226,24 @@ def parse_m3u_text(content: str, default_category: str = "IPTV") -> List[dict]:
 
     for line in lines:
         if line.startswith("#EXTINF:"):
-            # Extrai group-title="..."
             group_match = re.search(r'group-title="([^"]+)"', line, re.IGNORECASE)
             if group_match:
-                current_category = group_match.group(1).strip()
+                current_category = clean_category_name(group_match.group(1))
             else:
                 current_category = default_category
 
-            # Extrai tvg-logo="..."
             logo_match = re.search(r'tvg-logo="([^"]+)"', line, re.IGNORECASE)
             if logo_match:
                 current_logo = logo_match.group(1).strip()
             else:
                 current_logo = None
 
-            # Extrai tvg-id="..." or tvg-name="..."
             epg_match = re.search(r'tvg-id="([^"]+)"', line, re.IGNORECASE)
             if epg_match:
                 current_epg = epg_match.group(1).strip()
             else:
                 current_epg = None
 
-            # Nome do canal (depois da última vírgula)
             if "," in line:
                 raw_name = line.split(",")[-1].strip()
                 current_name = raw_name or "Canal IPTV"
@@ -209,11 +251,9 @@ def parse_m3u_text(content: str, default_category: str = "IPTV") -> List[dict]:
                 current_name = "Canal IPTV"
 
         elif line.startswith("#"):
-            # Outros comentários ou tags M3U (#EXTVLCOPT, etc)
             continue
         else:
-            # É a URL do stream
-            if line.startswith("http://") or line.startswith("https://") or line.startswith("rtmp://"):
+            if line.startswith("http://") or line.startswith("https://") or line.startswith("rtmp://") or line.startswith("mms://"):
                 channels.append({
                     "name": current_name or f"Canal {len(channels) + 1}",
                     "stream_url": line,
@@ -221,7 +261,6 @@ def parse_m3u_text(content: str, default_category: str = "IPTV") -> List[dict]:
                     "logo_url": current_logo,
                     "epg_id": current_epg,
                 })
-                # Reseta temporários
                 current_name = None
                 current_logo = None
                 current_category = default_category
@@ -232,17 +271,24 @@ def parse_m3u_text(content: str, default_category: str = "IPTV") -> List[dict]:
 
 # --- ROTAS PÚBLICAS / USUÁRIO ---
 
-@router.get("/channels", response_model=List[schemas.ChannelOut])
+@router.get("/channels", response_model=schemas.PaginatedChannels)
 def list_channels(
     category: Optional[str] = None,
+    playlist_id: Optional[int] = None,
     q: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(60, ge=1, le=5000),
+    all: bool = Query(False),
     db: Session = Depends(get_db),
     user: Optional[models.User] = Depends(get_current_user),
 ):
-    """Lista todos os canais ao vivo disponíveis (gratuitos e personalizados)."""
+    """Lista canais ao vivo de forma paginada e ultra-rápida, evitando congelar o navegador."""
     seed_default_channels_if_empty(db)
 
     query = db.query(models.Channel).filter(models.Channel.is_active == True)
+
+    if playlist_id:
+        query = query.filter(models.Channel.playlist_id == playlist_id)
     
     if category and category != "Todos":
         query = query.filter(models.Channel.category == category)
@@ -251,41 +297,93 @@ def list_channels(
         search = f"%{q}%"
         query = query.filter(models.Channel.name.ilike(search))
 
-    # Ordena por ordem definida e depois por ID
-    channels = query.order_by(models.Channel.order.asc(), models.Channel.id.asc()).all()
-    return channels
+    total = query.count()
+
+    if all:
+        items = query.order_by(models.Channel.order.asc(), models.Channel.id.asc()).all()
+        return {
+            "items": items,
+            "total": total,
+            "page": 1,
+            "limit": total or 1,
+            "total_pages": 1,
+        }
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+
+    items = query.order_by(models.Channel.order.asc(), models.Channel.id.asc()).offset(offset).limit(limit).all()
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+    }
 
 
-@router.get("/channels/categories")
+@router.get("/categories", response_model=List[schemas.CategoryWithCount])
 def list_categories(
+    playlist_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: Optional[models.User] = Depends(get_current_user),
 ):
-    """Retorna todas as categorias de canais existentes no catálogo."""
+    """Retorna todas as categorias com suas respectivas contagens de canais."""
     seed_default_channels_if_empty(db)
-    results = db.query(models.Channel.category).distinct().filter(models.Channel.is_active == True).all()
-    cats = [r[0] for r in results if r[0]]
-    # Garante categorias padrão na ordem correta
-    default_order = [
+
+    query = db.query(models.Channel.category, func.count(models.Channel.id).label("count")).filter(models.Channel.is_active == True)
+    if playlist_id:
+        query = query.filter(models.Channel.playlist_id == playlist_id)
+
+    results = query.group_by(models.Channel.category).all()
+    cat_dict = {r[0]: r[1] for r in results if r[0]}
+
+    priority_order = [
         "Abertos / Brasil",
-        "Notícias",
         "Esportes",
         "Filmes & Séries",
-        "Entretenimento",
-        "Infantil",
+        "Notícias",
+        "Infantil & Desenhos",
+        "Entretenimento & Variedades",
+        "Documentários",
         "Cultura & Educação",
-        "Variedades",
         "Música",
-        "IPTV Personalizado",
+        "Canais Públicos & Legislativos",
+        "Religiosos",
+        "Geral",
     ]
-    ordered_cats = []
-    for d in default_order:
-        if d in cats:
-            ordered_cats.append(d)
-    for c in cats:
-        if c not in ordered_cats:
-            ordered_cats.append(c)
-    return ordered_cats
+
+    ordered_list = []
+    added = set()
+
+    for p in priority_order:
+        if p in cat_dict:
+            ordered_list.append({"category": p, "count": cat_dict[p]})
+            added.add(p)
+
+    remaining = [
+        {"category": k, "count": v} for k, v in cat_dict.items() if k not in added
+    ]
+    remaining.sort(key=lambda x: x["count"], reverse=True)
+    ordered_list.extend(remaining)
+
+    return ordered_list
+
+
+@router.get("/playlists", response_model=List[schemas.PlaylistOut])
+def list_playlists(
+    db: Session = Depends(get_db),
+    user: Optional[models.User] = Depends(get_current_user),
+):
+    """Lista todas as listas/playlists IPTV cadastradas com quantidade atualizada de canais."""
+    playlists = db.query(models.Playlist).order_by(models.Playlist.id.desc()).all()
+    
+    for pl in playlists:
+        real_count = db.query(models.Channel).filter(models.Channel.playlist_id == pl.id).count()
+        pl.channel_count = real_count
+
+    return playlists
 
 
 @router.get("/channels/{id}", response_model=schemas.ChannelOut)
@@ -300,20 +398,22 @@ def get_channel(
     return channel
 
 
-@router.post("/parse-m3u", response_model=List[schemas.ParsedChannel])
+@router.post("/parse-m3u")
 async def parse_m3u_endpoint(
     payload: schemas.M3UImportRequest,
     user: models.User = Depends(get_current_user),
 ):
-    """Analisa uma URL ou texto M3U e retorna a lista de canais identificados para pré-visualização."""
+    """Analisa uma URL ou texto M3U e retorna resumo estruturado com categorias detectadas."""
     raw_content = ""
     if payload.url:
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                res = await client.get(payload.url, headers={"User-Agent": "Mozilla/5.0 SilvaFlix/1.0"})
+            async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+                res = await client.get(payload.url, headers={"User-Agent": "Mozilla/5.0 SilvaFlix/2.0"})
                 if res.status_code != 200:
                     raise HTTPException(status_code=400, detail=f"Erro ao baixar lista M3U (Status {res.status_code})")
                 raw_content = res.text
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Falha ao conectar com a URL da lista: {str(e)}")
     elif payload.content:
@@ -321,9 +421,23 @@ async def parse_m3u_endpoint(
     else:
         raise HTTPException(status_code=400, detail="Forneça uma URL ou o conteúdo da lista M3U")
 
-    default_cat = payload.category_override or "IPTV Personalizado"
+    default_cat = clean_category_name(payload.category_override) if payload.category_override else "Geral"
     channels = parse_m3u_text(raw_content, default_category=default_cat)
-    return channels
+
+    if not channels:
+        raise HTTPException(status_code=400, detail="Nenhum canal válido foi identificado na lista M3U.")
+
+    cat_counts = Counter(ch["category"] for ch in channels)
+    categories_summary = [
+        {"name": cat, "count": count} for cat, count in cat_counts.most_common()
+    ]
+
+    return {
+        "success": True,
+        "total_channels": len(channels),
+        "categories": categories_summary,
+        "sample_channels": channels[:50],
+    }
 
 
 @router.post("/xtream-connect")
@@ -338,7 +452,7 @@ async def connect_xtream_codes(
 
     api_url = f"{base_url}/player_api.php?username={payload.username}&password={payload.password}"
 
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         try:
             auth_res = await client.get(api_url)
             if auth_res.status_code != 200:
@@ -349,10 +463,9 @@ async def connect_xtream_codes(
             if user_info.get("auth") != 1 and user_info.get("status") != "Active":
                 raise HTTPException(status_code=401, detail="Usuário ou senha Xtream Codes inválidos ou conta expirada")
 
-            # Busca categorias e streams
             cats_res = await client.get(f"{api_url}&action=get_live_categories")
             categories = cats_res.json() if cats_res.status_code == 200 else []
-            cats_map = {str(c.get("category_id")): c.get("category_name") for c in categories if isinstance(c, dict)}
+            cats_map = {str(c.get("category_id")): clean_category_name(c.get("category_name")) for c in categories if isinstance(c, dict)}
 
             streams_res = await client.get(f"{api_url}&action=get_live_streams")
             streams = streams_res.json() if streams_res.status_code == 200 else []
@@ -364,7 +477,7 @@ async def connect_xtream_codes(
                 stream_id = s.get("stream_id")
                 stream_name = s.get("name") or "Canal Xtream"
                 cat_id = str(s.get("category_id"))
-                category_name = cats_map.get(cat_id, "IPTV Xtream")
+                category_name = cats_map.get(cat_id, "Geral")
                 icon_url = s.get("stream_icon")
                 epg_id = s.get("epg_channel_id")
 
@@ -378,12 +491,18 @@ async def connect_xtream_codes(
                     "epg_id": str(epg_id) if epg_id else None,
                 })
 
+            cat_counts = Counter(ch["category"] for ch in parsed_channels)
+            categories_summary = [
+                {"name": cat, "count": count} for cat, count in cat_counts.most_common()
+            ]
+
             return {
                 "success": True,
                 "server_info": data.get("server_info", {}),
                 "user_info": user_info,
-                "channels_count": len(parsed_channels),
-                "channels": parsed_channels[:500],  # Limita para não estourar resposta inicial se lista for gigante
+                "total_channels": len(parsed_channels),
+                "categories": categories_summary,
+                "sample_channels": parsed_channels[:50],
             }
         except HTTPException:
             raise
@@ -391,7 +510,7 @@ async def connect_xtream_codes(
             raise HTTPException(status_code=400, detail=f"Erro ao conectar com Xtream Codes: {str(e)}")
 
 
-# --- PROXY DE STREAMING HLS / IPTV (CORS BYPASS & RELATIVE URL REWRITER) ---
+# --- PROXY DE STREAMING HLS / IPTV ---
 
 @router.get("/proxy")
 async def live_proxy_stream(
@@ -399,8 +518,8 @@ async def live_proxy_stream(
     req: Request = None,
 ):
     """
-    Proxy universal de baixa latência para HLS (.m3u8 e .ts).
-    Resolve problemas de CORS e headers de proteção de players IPTV no navegador.
+    Proxy universal de alta performance para HLS (.m3u8 e .ts).
+    Resolve problemas de CORS e restrições de player no navegador.
     """
     if not url:
         raise HTTPException(status_code=400, detail="Parâmetro url é obrigatório")
@@ -431,13 +550,11 @@ async def live_proxy_stream(
         )
 
         if is_m3u8:
-            # Lê o conteúdo do manifesto para reescrever as URLs relativas ou absolutas através do proxy
             body_bytes = await upstream_res.aread()
             await upstream_res.aclose()
             await client.aclose()
 
             text_content = body_bytes.decode("utf-8", errors="ignore")
-            base_parsed = urllib.parse.urlparse(decoded_url)
             base_url_dir = decoded_url.rsplit("/", 1)[0] + "/"
 
             rewritten_lines = []
@@ -448,7 +565,6 @@ async def live_proxy_stream(
                     continue
 
                 if trimmed.startswith("#"):
-                    # Processa tags como #EXT-X-KEY:URI="...", #EXT-X-MAP:URI="..."
                     if 'URI="' in trimmed:
                         def replace_key_uri(match):
                             orig_uri = match.group(1)
@@ -460,7 +576,6 @@ async def live_proxy_stream(
                     else:
                         rewritten_lines.append(line)
                 else:
-                    # É uma URL de chunk (.ts, .aac, .m4s) ou de sub-manifesto (.m3u8)
                     abs_target = urllib.parse.urljoin(base_url_dir, trimmed)
                     proxy_target = f"/live/proxy?url={urllib.parse.quote(abs_target, safe='')}"
                     rewritten_lines.append(proxy_target)
@@ -477,7 +592,6 @@ async def live_proxy_stream(
                 },
             )
 
-        # Para arquivos de mídia binários (.ts, .aac, .mp4, .m4s), faz streaming direto
         async def media_stream_generator():
             try:
                 async for chunk in upstream_res.aiter_bytes(chunk_size=64 * 1024):
@@ -508,7 +622,7 @@ async def live_proxy_stream(
         raise HTTPException(status_code=502, detail=f"Erro ao acessar stream ao vivo via proxy: {str(e)}")
 
 
-# --- ROTAS ADMINISTRATIVAS / GESTÃO DE CANAIS ---
+# --- ROTAS ADMINISTRATIVAS / GESTÃO DE LISTAS E CANAIS ---
 
 @admin_router.post("/channels", response_model=schemas.ChannelOut)
 def create_channel(
@@ -517,13 +631,15 @@ def create_channel(
     admin: models.User = Depends(require_admin),
 ):
     """Cria um canal individual na grade de canais."""
+    clean_cat = clean_category_name(payload.category)
     channel = models.Channel(
         name=payload.name,
         stream_url=payload.stream_url,
-        category=payload.category,
+        category=clean_cat,
         logo_url=payload.logo_url,
         epg_id=payload.epg_id,
         is_custom=payload.is_custom,
+        playlist_id=payload.playlist_id,
         user_id=admin.id,
         order=payload.order,
         is_active=True,
@@ -531,6 +647,13 @@ def create_channel(
     db.add(channel)
     db.commit()
     db.refresh(channel)
+
+    if payload.playlist_id:
+        pl = db.query(models.Playlist).filter(models.Playlist.id == payload.playlist_id).first()
+        if pl:
+            pl.channel_count = db.query(models.Channel).filter(models.Channel.playlist_id == pl.id).count()
+            db.commit()
+
     return channel
 
 
@@ -547,6 +670,9 @@ def update_channel(
         raise HTTPException(status_code=404, detail="Canal não encontrado")
 
     update_data = payload.dict(exclude_unset=True)
+    if "category" in update_data and update_data["category"]:
+        update_data["category"] = clean_category_name(update_data["category"])
+
     for key, value in update_data.items():
         setattr(channel, key, value)
 
@@ -561,14 +687,137 @@ def delete_channel(
     db: Session = Depends(get_db),
     admin: models.User = Depends(require_admin),
 ):
-    """Remove um canal da grade."""
+    """Remove um canal individual da grade."""
     channel = db.query(models.Channel).filter(models.Channel.id == id).first()
     if not channel:
         raise HTTPException(status_code=404, detail="Canal não encontrado")
 
+    playlist_id = channel.playlist_id
     db.delete(channel)
     db.commit()
+
+    if playlist_id:
+        pl = db.query(models.Playlist).filter(models.Playlist.id == playlist_id).first()
+        if pl:
+            pl.channel_count = db.query(models.Channel).filter(models.Channel.playlist_id == pl.id).count()
+            db.commit()
+
     return {"ok": True, "message": "Canal removido com sucesso"}
+
+
+@admin_router.delete("/playlists/{id}")
+def delete_playlist(
+    id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Exclui uma lista IPTV inteira e todos os canais associados a ela."""
+    playlist = db.query(models.Playlist).filter(models.Playlist.id == id).first()
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Lista/Playlist não encontrada")
+
+    deleted_channels = db.query(models.Channel).filter(models.Channel.playlist_id == id).delete()
+    db.delete(playlist)
+    db.commit()
+
+    return {
+        "ok": True,
+        "deleted_channels_count": deleted_channels,
+        "message": f"Lista '{playlist.name}' e seus {deleted_channels} canais foram excluídos com sucesso.",
+    }
+
+
+@admin_router.post("/clear-all-custom")
+def clear_all_custom_channels(
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Exclui todos os canais customizados/importados e todas as playlists, mantendo apenas a grade padrão."""
+    deleted_channels = db.query(models.Channel).filter(models.Channel.is_custom == True).delete()
+    deleted_playlists = db.query(models.Playlist).delete()
+    db.commit()
+
+    seed_default_channels_if_empty(db)
+
+    return {
+        "ok": True,
+        "deleted_channels_count": deleted_channels,
+        "deleted_playlists_count": deleted_playlists,
+        "message": f"{deleted_channels} canais importados e {deleted_playlists} listas foram removidos. A grade limpa padrão foi restaurada.",
+    }
+
+
+@admin_router.post("/channels/bulk-delete")
+def bulk_delete_channels(
+    payload: schemas.BulkDeleteChannelsRequest,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Remove múltiplos canais selecionados de uma só vez."""
+    if not payload.channel_ids:
+        raise HTTPException(status_code=400, detail="Nenhum ID de canal fornecido.")
+
+    deleted = db.query(models.Channel).filter(models.Channel.id.in_(payload.channel_ids)).delete(synchronize_session=False)
+    db.commit()
+
+    playlists = db.query(models.Playlist).all()
+    for pl in playlists:
+        pl.channel_count = db.query(models.Channel).filter(models.Channel.playlist_id == pl.id).count()
+    db.commit()
+
+    return {
+        "ok": True,
+        "deleted_count": deleted,
+        "message": f"{deleted} canais foram removidos com sucesso.",
+    }
+
+
+@admin_router.post("/channels/delete-by-category")
+def delete_channels_by_category(
+    payload: schemas.DeleteByCategoryRequest,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Exclui todos os canais de uma categoria específica (e opcionalmente de uma playlist)."""
+    query = db.query(models.Channel).filter(models.Channel.category == payload.category)
+    if payload.playlist_id:
+        query = query.filter(models.Channel.playlist_id == payload.playlist_id)
+
+    deleted = query.delete(synchronize_session=False)
+    db.commit()
+
+    playlists = db.query(models.Playlist).all()
+    for pl in playlists:
+        pl.channel_count = db.query(models.Channel).filter(models.Channel.playlist_id == pl.id).count()
+    db.commit()
+
+    return {
+        "ok": True,
+        "deleted_count": deleted,
+        "message": f"{deleted} canais da categoria '{payload.category}' foram removidos com sucesso.",
+    }
+
+
+@admin_router.post("/organize-categories")
+def organize_all_categories(
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Re-analisa e organiza as categorias de todos os canais existentes no banco de dados."""
+    channels = db.query(models.Channel).all()
+    updated_count = 0
+    for ch in channels:
+        cleaned = clean_category_name(ch.category)
+        if ch.category != cleaned:
+            ch.category = cleaned
+            updated_count += 1
+    db.commit()
+
+    return {
+        "ok": True,
+        "updated_count": updated_count,
+        "message": f"Categorias de {updated_count} canais foram organizadas e padronizadas com sucesso!",
+    }
 
 
 @admin_router.post("/import-m3u")
@@ -577,15 +826,17 @@ async def import_m3u_channels(
     db: Session = Depends(get_db),
     admin: models.User = Depends(require_admin),
 ):
-    """Importa uma lista M3U inteira para a base de dados."""
+    """Importa uma lista M3U criando uma Playlist vinculada para fácil gestão ou exclusão futura."""
     raw_content = ""
     if payload.url:
         try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-                res = await client.get(payload.url, headers={"User-Agent": "Mozilla/5.0 SilvaFlix/1.0"})
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                res = await client.get(payload.url, headers={"User-Agent": "Mozilla/5.0 SilvaFlix/2.0"})
                 if res.status_code != 200:
                     raise HTTPException(status_code=400, detail=f"Erro ao baixar lista M3U (Status {res.status_code})")
                 raw_content = res.text
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Falha ao buscar URL da lista M3U: {str(e)}")
     elif payload.content:
@@ -593,38 +844,61 @@ async def import_m3u_channels(
     else:
         raise HTTPException(status_code=400, detail="Forneça uma URL ou o conteúdo da lista M3U")
 
-    default_cat = payload.category_override or "IPTV Personalizado"
+    default_cat = clean_category_name(payload.category_override) if payload.category_override else "Geral"
     parsed_channels = parse_m3u_text(raw_content, default_category=default_cat)
 
     if not parsed_channels:
         raise HTTPException(status_code=400, detail="Nenhum canal válido foi encontrado no arquivo/URL M3U fornecido.")
 
-    # Busca a maior ordem existente para adicionar em sequência
+    if payload.selected_categories and len(payload.selected_categories) > 0:
+        allowed = set(payload.selected_categories)
+        parsed_channels = [ch for ch in parsed_channels if ch["category"] in allowed]
+
+    if not parsed_channels:
+        raise HTTPException(status_code=400, detail="Nenhum canal corresponde às categorias selecionadas.")
+
+    playlist_name = payload.name.strip() if (payload.name and payload.name.strip()) else f"Lista M3U ({datetime.now().strftime('%d/%m/%Y %H:%M')})"
+    playlist = models.Playlist(
+        name=playlist_name,
+        url=payload.url,
+        type="m3u",
+        channel_count=len(parsed_channels),
+    )
+    db.add(playlist)
+    db.commit()
+    db.refresh(playlist)
+
     last_channel = db.query(models.Channel).order_by(models.Channel.order.desc()).first()
     next_order = (last_channel.order + 1) if last_channel else 1
 
-    created_count = 0
+    channel_objects = []
     for ch in parsed_channels:
-        db_ch = models.Channel(
-            name=ch["name"],
-            stream_url=ch["stream_url"],
-            category=ch.get("category", default_cat),
-            logo_url=ch.get("logo_url"),
-            epg_id=ch.get("epg_id"),
-            is_custom=True,
-            user_id=admin.id,
-            order=next_order,
-            is_active=True,
+        category_name = default_cat if payload.category_override else ch.get("category", default_cat)
+        channel_objects.append(
+            models.Channel(
+                name=ch["name"],
+                stream_url=ch["stream_url"],
+                category=category_name,
+                logo_url=ch.get("logo_url"),
+                epg_id=ch.get("epg_id"),
+                is_custom=True,
+                playlist_id=playlist.id,
+                user_id=admin.id,
+                order=next_order,
+                is_active=True,
+            )
         )
-        db.add(db_ch)
         next_order += 1
-        created_count += 1
 
+    db.bulk_save_objects(channel_objects)
     db.commit()
+
     return {
         "ok": True,
-        "imported_count": created_count,
-        "message": f"{created_count} canais foram importados com sucesso para a grade ao vivo.",
+        "playlist_id": playlist.id,
+        "playlist_name": playlist.name,
+        "imported_count": len(channel_objects),
+        "message": f"Lista '{playlist.name}' criada com sucesso com {len(channel_objects)} canais organizados!",
     }
 
 
@@ -634,7 +908,6 @@ def reset_default_channels(
     admin: models.User = Depends(require_admin),
 ):
     """Restaura todos os canais gratuitos padrão do SilvaFlix."""
-    # Remove canais padrão existentes (não customizados)
     db.query(models.Channel).filter(models.Channel.is_custom == False).delete()
     db.commit()
 
@@ -646,6 +919,7 @@ def reset_default_channels(
             logo_url=ch.get("logo_url"),
             epg_id=ch.get("epg_id"),
             is_custom=False,
+            playlist_id=None,
             order=ch.get("order", 0),
             is_active=True,
         )

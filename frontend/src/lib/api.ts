@@ -1,67 +1,67 @@
-const NPOINT_BRIDGE_URL = "https://api.npoint.io/a008871770ac1c671939";
+const STORAGE_KEY = "silvaflix_backend_url";
+const DEFAULT_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const NPOINT_URL = "https://api.npoint.io/a008871770ac1c671939";
 
-function cleanUrl(url?: string | null): string {
-  if (!url) return "";
-  const trimmed = url.trim().replace(/\/$/, "");
-  if (trimmed.includes("loca.lt") || trimmed.includes("ngrok") || trimmed.includes("teste.")) {
-    return "";
-  }
-  return trimmed;
-}
-
-if (typeof window !== "undefined") {
-  const raw = window.localStorage.getItem("silvaflix_api_url");
-  if (raw && !cleanUrl(raw)) {
-    window.localStorage.removeItem("silvaflix_api_url");
-  }
-}
-
-let cachedApiUrl: string =
-  (typeof window !== "undefined" && cleanUrl(window.localStorage.getItem("silvaflix_api_url"))) ||
-  cleanUrl(process.env.NEXT_PUBLIC_API_URL) ||
-  "http://localhost:8000";
-
-let syncPromise: Promise<string> | null = null;
+let cachedUrl: string | null = null;
+let lastSyncTime = 0;
 
 export async function syncApiUrl(force = false): Promise<string> {
-  if (syncPromise && !force) return syncPromise;
+  const now = Date.now();
+  if (!force && cachedUrl && now - lastSyncTime < 10000) {
+    return cachedUrl;
+  }
 
-  syncPromise = (async () => {
+  if (typeof window !== "undefined") {
     try {
-      const res = await fetch(NPOINT_BRIDGE_URL, {
+      const res = await fetch(NPOINT_URL, {
+        headers: { "bypass-tunnel-reminder": "true" },
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
       });
       if (res.ok) {
         const data = await res.json();
-        const validUrl = cleanUrl(data?.url);
-        if (validUrl && validUrl.startsWith("http")) {
-          cachedApiUrl = validUrl;
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem("silvaflix_api_url", cachedApiUrl);
-          }
+        if (data.url && typeof data.url === "string" && data.url.startsWith("http")) {
+          const fresh = data.url.replace(/\/+$/, "");
+          localStorage.setItem(STORAGE_KEY, fresh);
+          cachedUrl = fresh;
+          lastSyncTime = now;
+          return fresh;
         }
       }
     } catch {
-      // fallback to cachedApiUrl
+      // ignore
     }
-    return cachedApiUrl;
-  })();
+  }
 
-  return syncPromise;
-}
+  if (typeof window !== "undefined") {
+    const local = localStorage.getItem(STORAGE_KEY);
+    if (local) {
+      cachedUrl = local;
+      return local;
+    }
+  }
 
-// Initial background sync in browser
-if (typeof window !== "undefined") {
-  syncApiUrl();
+  cachedUrl = DEFAULT_URL;
+  return DEFAULT_URL;
 }
 
 export function getApiUrl(): string {
+  if (cachedUrl) return cachedUrl;
   if (typeof window !== "undefined") {
-    const stored = cleanUrl(window.localStorage.getItem("silvaflix_api_url"));
-    if (stored) return stored;
+    const local = localStorage.getItem(STORAGE_KEY);
+    if (local) {
+      cachedUrl = local;
+      return local;
+    }
   }
-  return cachedApiUrl;
+  return DEFAULT_URL;
+}
+
+export function setApiUrl(url: string) {
+  const clean = url.replace(/\/+$/, "");
+  cachedUrl = clean;
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY, clean);
+  }
 }
 
 export type Role = "admin" | "viewer";
@@ -77,38 +77,42 @@ export interface Movie {
   id: number;
   title: string;
   synopsis: string;
-  year: number | null;
-  genre: string | null;
-  duration_minutes: number | null;
-  director: string | null;
-  cast: string | null;
-  thumbnail_filename: string | null;
-  backdrop_filename: string | null;
+  year?: number | null;
+  genre?: string | null;
+  duration_minutes?: number | null;
+  director?: string | null;
+  cast?: string | null;
+  filename: string;
+  thumbnail_filename?: string | null;
+  backdrop_filename?: string | null;
   is_private: boolean;
   is_featured: boolean;
-  is_series?: boolean;
+
+  is_series: boolean;
   series_title?: string | null;
   season_number?: number | null;
   episode_number?: number | null;
   episode_title?: string | null;
+
   collection_name?: string | null;
   trailer_youtube_id?: string | null;
+
   created_at: string;
 }
 
 export interface MovieCollection {
   name: string;
-  count: number;
   movies: Movie[];
 }
 
-export interface AdminStats {
-  total_movies: number;
-  total_episodes: number;
-  total_duration_hours: number;
-  genres_count: Record<string, number>;
-  top_genre: string;
-  total_titles: number;
+export interface AudioTrack {
+  index: number;
+  title: string;
+  language: string;
+  language_name?: string;
+  flag?: string;
+  codec: string;
+  is_default: boolean;
 }
 
 export interface Review {
@@ -123,20 +127,49 @@ export interface Review {
   created_at: string;
 }
 
-export interface AudioTrack {
-  index: number;
-  stream_id: number;
-  language: string;
-  language_name: string;
-  flag: string;
-  title: string;
-  codec: string;
+export interface AdminStats {
+  total_movies: number;
+  total_episodes?: number;
+  total_duration_hours?: number;
+  top_genre?: string;
+  total_private: number;
+  total_public: number;
+  total_users: number;
+  total_views: number;
+  top_movies: Array<{
+    id: number;
+    title: string;
+    views_count: number;
+    year?: number;
+    genre?: string;
+  }>;
+  recent_views: Array<{
+    id: number;
+    movie_id: number;
+    movie_title: string;
+    user_id: number;
+    user_name: string;
+    profile_name?: string;
+    duration_watched_seconds: number;
+    watched_at: string;
+  }>;
+}
+
+export interface HistoryItem {
+  id: number;
+  movie_id: number;
+  movie: Movie;
+  profile_name?: string;
+  last_position_seconds: number;
+  duration_watched_seconds: number;
+  completed: boolean;
+  updated_at: string;
 }
 
 export interface TMDBSearchResult {
   tmdb_id: number;
   title: string;
-  year: string | null;
+  year?: string | null;
   poster_url: string | null;
   overview: string;
 }
@@ -172,6 +205,20 @@ export interface RoomState {
   messages: ChatMessage[];
 }
 
+export interface Playlist {
+  id: number;
+  name: string;
+  url?: string | null;
+  type: string;
+  channel_count: number;
+  created_at: string;
+}
+
+export interface CategoryWithCount {
+  category: string;
+  count: number;
+}
+
 export interface Channel {
   id: number;
   name: string;
@@ -180,10 +227,19 @@ export interface Channel {
   logo_url?: string | null;
   epg_id?: string | null;
   is_custom: boolean;
+  playlist_id?: number | null;
   user_id?: number | null;
   is_active: boolean;
   order: number;
   created_at: string;
+}
+
+export interface PaginatedChannels {
+  items: Channel[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
 }
 
 export interface ParsedChannel {
@@ -194,12 +250,22 @@ export interface ParsedChannel {
   epg_id?: string | null;
 }
 
+export interface ParseM3UResponse {
+  success: boolean;
+  total_channels: number;
+  categories: Array<{ name: string; count: number }>;
+  sample_channels: ParsedChannel[];
+}
+
 export interface XtreamResponse {
   success: boolean;
   server_info: Record<string, unknown>;
   user_info: Record<string, unknown>;
-  channels_count: number;
-  channels: ParsedChannel[];
+  total_channels?: number;
+  channels_count?: number;
+  categories?: Array<{ name: string; count: number }>;
+  sample_channels?: ParsedChannel[];
+  channels?: ParsedChannel[];
 }
 
 class ApiError extends Error {
@@ -232,13 +298,12 @@ async function request<T>(
   try {
     res = await fetch(`${baseUrl}${path}`, { ...options, headers });
   } catch {
-    // If request failed (e.g. backend restarted with a new link), refresh from npoint and retry once!
     if (!isRetry) {
       try {
         baseUrl = await syncApiUrl(true);
         return await request<T>(path, options, token, true);
       } catch {
-        // continue to throw below
+        // continue
       }
     }
     throw new ApiError(
@@ -248,21 +313,21 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    let detail = res.statusText;
+    let errorDetail = `Erro ${res.status}`;
     try {
       const data = await res.json();
-      detail = data.detail || detail;
+      if (data.detail) errorDetail = data.detail;
     } catch {
       // ignore
     }
-    throw new ApiError(detail, res.status);
+    throw new ApiError(errorDetail, res.status);
   }
 
-  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
 export const api = {
+  // --- Autenticação ---
   login: (email: string, password: string) =>
     request<{ access_token: string; token_type: string; user: User }>(
       "/auth/login",
@@ -271,7 +336,20 @@ export const api = {
 
   me: (token: string) => request<User>("/auth/me", {}, token),
 
-  listMovies: (token: string) => request<Movie[]>("/movies", {}, token),
+  // --- Filmes / Catálogo ---
+  listMovies: (token: string, genre?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (genre && genre !== "Todos") params.set("genre", genre);
+    if (query) params.set("q", query);
+    const qs = params.toString();
+    return request<Movie[]>(`/movies${qs ? `?${qs}` : ""}`, {}, token);
+  },
+
+  listFeaturedMovies: (token: string) =>
+    request<Movie[]>("/movies/featured", {}, token),
+
+  listMovieCollections: (token: string) =>
+    request<Record<string, Movie[]>>("/movies/collections", {}, token),
 
   listCollections: (token: string) =>
     request<MovieCollection[]>("/movies/collections", {}, token),
@@ -281,6 +359,10 @@ export const api = {
 
   getAudioTracks: (id: number, token: string) =>
     request<AudioTrack[]>(`/movies/${id}/audio-tracks`, {}, token),
+
+  getStreamUrl: (id: number, token: string) => {
+    return `${getApiUrl()}/movies/${id}/stream?token=${encodeURIComponent(token)}`;
+  },
 
   streamUrl: (id: number, token?: string | null, audioTrack?: number) => {
     const params = new URLSearchParams();
@@ -292,20 +374,28 @@ export const api = {
     return `${getApiUrl()}/movies/${id}/stream${qs ? `?${qs}` : ""}`;
   },
 
+  getThumbnailUrl: (id: number) => {
+    return `${getApiUrl()}/movies/${id}/thumbnail`;
+  },
+
   thumbnailUrl: (id: number) => `${getApiUrl()}/movies/${id}/thumbnail`,
   backdropUrl: (id: number) => `${getApiUrl()}/movies/${id}/backdrop`,
   subtitleUrl: (id: number) => `${getApiUrl()}/movies/${id}/subtitles`,
 
+  getBackdropUrl: (id: number) => {
+    return `${getApiUrl()}/movies/${id}/backdrop`;
+  },
+
   getMovieTrailer: (movieId: number, token: string) =>
     request<{ trailer_youtube_id: string | null }>(`/movies/${movieId}/trailer`, {}, token),
 
-  // --- Reviews Familiares ---
+  // --- Resenhas ---
   listReviews: (movieId: number, token: string) =>
     request<Review[]>(`/movies/${movieId}/reviews`, {}, token),
 
   createReview: (
     movieId: number,
-    payload: { rating: number; comment: string; has_spoiler?: boolean; profile_name?: string },
+    payload: { rating: number; comment: string; profile_name?: string; has_spoiler?: boolean },
     token: string
   ) =>
     request<Review>(
@@ -321,7 +411,42 @@ export const api = {
       token
     ),
 
+  // --- Histórico & Progresso ---
+  updateProgress: (
+    movieId: number,
+    payload: {
+      position_seconds: number;
+      duration_watched_seconds: number;
+      profile_name?: string;
+      completed?: boolean;
+    },
+    token: string
+  ) =>
+    request<{ ok: boolean }>(
+      `/movies/${movieId}/progress`,
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  listHistory: (token: string, profileName?: string) => {
+    const qs = profileName ? `?profile_name=${encodeURIComponent(profileName)}` : "";
+    return request<HistoryItem[]>(`/movies/user/history${qs}`, {}, token);
+  },
+
   // --- Watch Party ---
+  createPartyRoom: (movieId: number, hostName: string, token: string) =>
+    request<{ room_id: string }>(
+      "/party/rooms",
+      {
+        method: "POST",
+        body: JSON.stringify({ movie_id: movieId, host_name: hostName }),
+      },
+      token
+    ),
+
+  getPartyRoom: (roomId: string, token: string) =>
+    request<RoomState>(`/party/rooms/${roomId}`, {}, token),
+
   createWatchParty: (movieId: number, hostName: string) =>
     request<RoomState>("/party/rooms", {
       method: "POST",
@@ -338,63 +463,29 @@ export const api = {
     return `${wsProto}://${cleanUrl}/party/ws/${roomId}`;
   },
 
-  // --- admin ---
+  // --- Admin ---
   getAdminStats: (token: string) =>
     request<AdminStats>("/admin/stats", {}, token),
 
   availableFiles: (token: string) =>
     request<string[]>("/admin/movies/available-files", {}, token),
 
-  autoScanMovies: (token: string) =>
-    request<AutoScanResponse>("/admin/movies/auto-scan", { method: "POST" }, token),
-
   createMovie: (
-    payload: {
-      title: string;
-      synopsis: string;
-      year?: number;
-      genre?: string;
-      duration_minutes?: number;
-      director?: string;
-      cast?: string;
-      filename: string;
-      is_private: boolean;
-      is_series?: boolean;
-      series_title?: string;
-      season_number?: number;
-      episode_number?: number;
-      episode_title?: string;
-      collection_name?: string;
-      trailer_youtube_id?: string;
-    },
+    data: Record<string, unknown> | FormData,
     token: string
   ) =>
     request<Movie>(
       "/admin/movies",
-      { method: "POST", body: JSON.stringify(payload) },
+      {
+        method: "POST",
+        body: data instanceof FormData ? data : JSON.stringify(data),
+      },
       token
     ),
 
   updateMovie: (
     id: number,
-    payload: Partial<{
-      title: string;
-      synopsis: string;
-      year: number;
-      genre: string;
-      duration_minutes: number;
-      director: string;
-      cast: string;
-      is_private: boolean;
-      is_featured: boolean;
-      is_series: boolean;
-      series_title: string;
-      season_number: number;
-      episode_number: number;
-      episode_title: string;
-      collection_name: string;
-      trailer_youtube_id: string;
-    }>,
+    payload: Partial<Movie>,
     token: string
   ) =>
     request<Movie>(
@@ -403,42 +494,49 @@ export const api = {
       token
     ),
 
-  togglePrivacy: (id: number, token: string) =>
-    request<Movie>(
-      `/admin/movies/${id}/toggle-privacy`,
-      { method: "PATCH" },
-      token
-    ),
-
   deleteMovie: (id: number, token: string) =>
-    request<{ ok: boolean }>(
+    request<{ ok: boolean; message?: string }>(
       `/admin/movies/${id}`,
       { method: "DELETE" },
       token
     ),
 
-  uploadThumbnail: (id: number, file: File, token: string) => {
-    const form = new FormData();
-    form.append("file", file);
+  autoScanMovies: (token: string) =>
+    request<AutoScanResponse>(
+      "/admin/movies/auto-scan",
+      { method: "POST" },
+      token
+    ),
+
+  togglePrivacy: (movieId: number, token: string) =>
+    request<Movie>(
+      `/admin/movies/${movieId}/toggle-privacy`,
+      { method: "PATCH" },
+      token
+    ),
+
+  uploadThumbnail: (movieId: number, file: File, token: string) => {
+    const data = new FormData();
+    data.append("file", file);
     return request<Movie>(
-      `/admin/movies/${id}/thumbnail`,
-      { method: "POST", body: form },
+      `/admin/movies/${movieId}/thumbnail`,
+      { method: "POST", body: data },
       token
     );
   },
 
-  uploadBackdrop: (id: number, file: File, token: string) => {
-    const form = new FormData();
-    form.append("file", file);
+  uploadBackdrop: (movieId: number, file: File, token: string) => {
+    const data = new FormData();
+    data.append("file", file);
     return request<Movie>(
-      `/admin/movies/${id}/backdrop`,
-      { method: "POST", body: form },
+      `/admin/movies/${movieId}/backdrop`,
+      { method: "POST", body: data },
       token
     );
   },
 
   createUser: (
-    payload: { name: string; email: string; password: string; role: Role },
+    payload: { name: string; email: string; password: string; role?: Role },
     token: string
   ) =>
     request<User>(
@@ -467,16 +565,37 @@ export const api = {
     ),
 
   // --- TV Ao Vivo & IPTV ---
-  listChannels: (token: string, category?: string, query?: string) => {
-    const params = new URLSearchParams();
-    if (category && category !== "Todos") params.set("category", category);
-    if (query) params.set("q", query);
-    const qs = params.toString();
-    return request<Channel[]>(`/live/channels${qs ? `?${qs}` : ""}`, {}, token);
+  listChannels: (
+    token: string,
+    params?: {
+      category?: string;
+      playlist_id?: number;
+      query?: string;
+      page?: number;
+      limit?: number;
+      all?: boolean;
+    }
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.category && params.category !== "Todos" && params.category !== "Favoritos") {
+      qs.set("category", params.category);
+    }
+    if (params?.playlist_id) qs.set("playlist_id", String(params.playlist_id));
+    if (params?.query) qs.set("q", params.query);
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.all) qs.set("all", "true");
+    const qStr = qs.toString();
+    return request<PaginatedChannels>(`/live/channels${qStr ? `?${qStr}` : ""}`, {}, token);
   },
 
-  listChannelCategories: (token: string) =>
-    request<string[]>("/live/channels/categories", {}, token),
+  listChannelCategories: (token: string, playlist_id?: number) => {
+    const qs = playlist_id ? `?playlist_id=${playlist_id}` : "";
+    return request<CategoryWithCount[]>(`/live/categories${qs}`, {}, token);
+  },
+
+  listPlaylists: (token: string) =>
+    request<Playlist[]>("/live/playlists", {}, token),
 
   getChannel: (id: number, token: string) =>
     request<Channel>(`/live/channels/${id}`, {}, token),
@@ -485,7 +604,7 @@ export const api = {
     payload: { url?: string; content?: string; category_override?: string },
     token: string
   ) =>
-    request<ParsedChannel[]>("/live/parse-m3u", {
+    request<ParseM3UResponse>("/live/parse-m3u", {
       method: "POST",
       body: JSON.stringify(payload),
     }, token),
@@ -510,6 +629,7 @@ export const api = {
       category?: string;
       logo_url?: string;
       epg_id?: string;
+      playlist_id?: number;
       order?: number;
     },
     token: string
@@ -538,11 +658,52 @@ export const api = {
       token
     ),
 
+  deletePlaylist: (id: number, token: string) =>
+    request<{ ok: boolean; deleted_channels_count: number; message: string }>(
+      `/admin/live/playlists/${id}`,
+      { method: "DELETE" },
+      token
+    ),
+
+  clearAllCustomChannels: (token: string) =>
+    request<{ ok: boolean; deleted_channels_count: number; deleted_playlists_count: number; message: string }>(
+      "/admin/live/clear-all-custom",
+      { method: "POST" },
+      token
+    ),
+
+  bulkDeleteChannels: (channelIds: number[], token: string) =>
+    request<{ ok: boolean; deleted_count: number; message: string }>(
+      "/admin/live/channels/bulk-delete",
+      { method: "POST", body: JSON.stringify({ channel_ids: channelIds }) },
+      token
+    ),
+
+  deleteChannelsByCategory: (category: string, token: string, playlist_id?: number) =>
+    request<{ ok: boolean; deleted_count: number; message: string }>(
+      "/admin/live/channels/delete-by-category",
+      { method: "POST", body: JSON.stringify({ category, playlist_id }) },
+      token
+    ),
+
+  organizeCategories: (token: string) =>
+    request<{ ok: boolean; updated_count: number; message: string }>(
+      "/admin/live/organize-categories",
+      { method: "POST" },
+      token
+    ),
+
   importM3U: (
-    payload: { url?: string; content?: string; category_override?: string },
+    payload: {
+      name?: string;
+      url?: string;
+      content?: string;
+      category_override?: string;
+      selected_categories?: string[];
+    },
     token: string
   ) =>
-    request<{ ok: boolean; imported_count: number; message: string }>(
+    request<{ ok: boolean; playlist_id: number; playlist_name: string; imported_count: number; message: string }>(
       "/admin/live/import-m3u",
       { method: "POST", body: JSON.stringify(payload) },
       token

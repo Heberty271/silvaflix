@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
@@ -33,28 +33,51 @@ class Token(BaseModel):
     user: UserOut
 
 
-class MovieOut(BaseModel):
-    id: int
+class MovieCreate(BaseModel):
     title: str
-    synopsis: str
+    synopsis: Optional[str] = ""
     year: Optional[int] = None
     genre: Optional[str] = None
     duration_minutes: Optional[int] = None
     director: Optional[str] = None
     cast: Optional[str] = None
+    filename: str
     thumbnail_filename: Optional[str] = None
     backdrop_filename: Optional[str] = None
-    is_private: bool
-    is_featured: bool
+    is_private: bool = True
+    is_featured: bool = False
 
-    # Séries
     is_series: bool = False
     series_title: Optional[str] = None
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
     episode_title: Optional[str] = None
 
-    # Coleções / Franquias & Trailers
+    collection_name: Optional[str] = None
+    trailer_youtube_id: Optional[str] = None
+
+
+class MovieOut(BaseModel):
+    id: int
+    title: str
+    synopsis: Optional[str] = ""
+    year: Optional[int] = None
+    genre: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    director: Optional[str] = None
+    cast: Optional[str] = None
+    filename: str
+    thumbnail_filename: Optional[str] = None
+    backdrop_filename: Optional[str] = None
+    is_private: bool
+    is_featured: bool
+
+    is_series: bool
+    series_title: Optional[str] = None
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+    episode_title: Optional[str] = None
+
     collection_name: Optional[str] = None
     trailer_youtube_id: Optional[str] = None
 
@@ -62,27 +85,6 @@ class MovieOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class MovieCreate(BaseModel):
-    title: str
-    synopsis: str = ""
-    year: Optional[int] = None
-    genre: Optional[str] = None
-    duration_minutes: Optional[int] = None
-    director: Optional[str] = None
-    cast: Optional[str] = None
-    filename: str
-    is_private: bool = True
-
-    is_series: bool = False
-    series_title: Optional[str] = None
-    season_number: Optional[int] = None
-    episode_number: Optional[int] = None
-    episode_title: Optional[str] = None
-
-    collection_name: Optional[str] = None
-    trailer_youtube_id: Optional[str] = None
 
 
 class TMDBSearchResult(BaseModel):
@@ -142,6 +144,24 @@ class ReviewOut(BaseModel):
 
 
 # TV Ao Vivo & IPTV
+class PlaylistOut(BaseModel):
+    id: int
+    name: str
+    url: Optional[str] = None
+    type: str = "m3u"
+    channel_count: int = 0
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PlaylistCreate(BaseModel):
+    name: str
+    url: Optional[str] = None
+    type: str = "m3u"
+
+
 class ChannelCreate(BaseModel):
     name: str
     stream_url: str
@@ -149,6 +169,7 @@ class ChannelCreate(BaseModel):
     logo_url: Optional[str] = None
     epg_id: Optional[str] = None
     is_custom: bool = True
+    playlist_id: Optional[int] = None
     order: int = 0
 
 
@@ -159,6 +180,7 @@ class ChannelUpdate(BaseModel):
     logo_url: Optional[str] = None
     epg_id: Optional[str] = None
     is_active: Optional[bool] = None
+    playlist_id: Optional[int] = None
     order: Optional[int] = None
 
 
@@ -170,6 +192,7 @@ class ChannelOut(BaseModel):
     logo_url: Optional[str] = None
     epg_id: Optional[str] = None
     is_custom: bool
+    playlist_id: Optional[int] = None
     user_id: Optional[int] = None
     is_active: bool
     order: int
@@ -179,10 +202,25 @@ class ChannelOut(BaseModel):
         from_attributes = True
 
 
+class PaginatedChannels(BaseModel):
+    items: List[ChannelOut]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+
+
+class CategoryWithCount(BaseModel):
+    category: str
+    count: int
+
+
 class M3UImportRequest(BaseModel):
+    name: Optional[str] = None
     url: Optional[str] = None
     content: Optional[str] = None
     category_override: Optional[str] = None
+    selected_categories: Optional[List[str]] = None
 
 
 class ParsedChannel(BaseModel):
@@ -198,3 +236,11 @@ class XtreamLoginRequest(BaseModel):
     username: str
     password: str
 
+
+class BulkDeleteChannelsRequest(BaseModel):
+    channel_ids: List[int]
+
+
+class DeleteByCategoryRequest(BaseModel):
+    category: str
+    playlist_id: Optional[int] = None
