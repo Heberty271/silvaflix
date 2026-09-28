@@ -333,3 +333,59 @@ class BulkDeleteChannelsRequest(BaseModel):
 class DeleteByCategoryRequest(BaseModel):
     category: str
     playlist_id: Optional[int] = None
+
+
+# --- Schemas para Busca Inteligente de Filmes & Séries com IA (SilvaFlix IA) ---
+
+class AISearchRequest(BaseModel):
+    query: str
+    year: Optional[int] = None
+
+
+class AIStreamOption(BaseModel):
+    provider_name: str
+    player_url: str
+    quality: str = "1080p Full HD"
+    language: str = "Dublado / Legendado"
+    player_type: str = "embed"
+    description: Optional[str] = None
+    latency_ms: Optional[int] = None
+    status: Optional[str] = "online"
+    working: Optional[bool] = True
+
+
+class AIMetadata(BaseModel):
+    tmdb_id: int
+    imdb_id: Optional[str] = None
+    media_type: str = "movie"
+    title: str
+    original_title: Optional[str] = None
+    synopsis: Optional[str] = ""
+    year: Optional[int] = None
+    genre: Optional[str] = "Geral"
+    duration_minutes: Optional[int] = None
+    director: Optional[str] = None
+    cast: Optional[str] = None
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
+    trailer_youtube_id: Optional[str] = None
+    collection_name: Optional[str] = None
+    is_series: bool = False
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+
+
+class AISearchResultResponse(BaseModel):
+    query: str
+    found: bool
+    metadata: AIMetadata
+    providers: List[AIStreamOption]
+    total_providers: int
+    best_provider: Optional[AIStreamOption] = None
+
+
+class AIImportStreamRequest(BaseModel):
+    player_url: str
+    provider_name: str
+    metadata: AIMetadata
+    is_private: bool = False

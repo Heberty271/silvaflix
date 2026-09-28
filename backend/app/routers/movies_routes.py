@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Response
@@ -10,6 +11,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, tmdb
+from ..ai_finder import ai_find_movie
 from ..auth import get_current_user, require_admin
 from ..config import MEDIA_MOVIES_DIR, MEDIA_THUMBS_DIR, TMDB_API_KEY
 from ..database import get_db
@@ -1174,3 +1176,67 @@ def list_movie_sources(
             "count": r.count,
         })
     return sources
+
+
+# ---------------------- Rotas de IA (SilvaFlix IA Search & Crawler) ----------------------
+
+@router.post("/ai/search-movie", response_model=schemas.AISearchResultResponse)
+async def search_movie_with_ai(
+    payload: schemas.AISearchRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Busca inteligente de filmes e séries na web com IA (TMDB + múltiplos players)."""
+    if not payload.query or not payload.query.strip():
+        raise HTTPException(status_code=400, detail="Digite o nome de um filme ou série para buscar.")
+    return await ai_find_movie(query=payload.query, year=payload.year)
+
+
+@router.post("/ai/import-stream", response_model=schemas.MovieOut)
+async def import_ai_stream(
+    payload: schemas.AIImportStreamRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Salva no catálogo do SilvaFlix o filme ou série encontrado pela IA com 1 clique."""
+    meta = payload.metadata
+
+    movie = models.Movie(
+        title=meta.title,
+        synopsis=meta.synopsis or "",
+        year=meta.year,
+        genre=meta.genre or "Geral",
+        duration_minutes=meta.duration_minutes,
+        director=meta.director,
+        cast=meta.cast,
+        filename=f"ai_{meta.tmdb_id}_{int(time.time())}.mp4",
+        video_url=payload.player_url,
+        is_external=True,
+        source_name=f"SilvaFlix IA ({payload.provider_name})",
+        thumbnail_filename=meta.poster_url,
+        backdrop_filename=meta.backdrop_url,
+        trailer_youtube_id=meta.trailer_youtube_id,
+        collection_name=meta.collection_name,
+        is_series=meta.is_series,
+        season_number=meta.season_number,
+        episode_number=meta.episode_number,
+        is_private=payload.is_private if current_user.role == models.RoleEnum.admin else False,
+    )
+    db.add(movie)
+    db.commit()
+    db.refresh(movie)
+
+    # Tenta salvar poster localmente em disco se a pasta existir
+    if meta.poster_url and meta.poster_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
+        try:
+            img_data = await tmdb.download_poster(meta.poster_url)
+            thumb_name = f"movie_{movie.id}.jpg"
+            with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
+                f.write(img_data)
+            movie.thumbnail_filename = thumb_name
+            db.commit()
+            db.refresh(movie)
+        except Exception:
+            pass
+
+    return movie
+

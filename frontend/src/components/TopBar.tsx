@@ -8,6 +8,7 @@ import { useProfile } from "@/lib/profile-context";
 import { useTV } from "@/lib/tv-context";
 import { api, Movie } from "@/lib/api";
 import { SurpriseModal } from "@/components/SurpriseModal";
+import { AiMovieFinderModal } from "@/components/AiMovieFinderModal";
 
 export function TopBar() {
   const { user, token } = useAuth();
@@ -17,6 +18,7 @@ export function TopBar() {
 
   const [query, setQuery] = useState("");
   const [showSurprise, setShowSurprise] = useState(false);
+  const [showAiFinder, setShowAiFinder] = useState(false);
   const [surprisePool, setSurprisePool] = useState<Movie[]>([]);
 
   // Notificações de Lançamentos Recentes
@@ -89,6 +91,16 @@ export function TopBar() {
         </form>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Botão SilvaFlix IA */}
+          <button
+            onClick={() => setShowAiFinder(true)}
+            title="Buscar qualquer filme ou série na internet com IA"
+            className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-brand via-rose-600 to-brand2 px-3 sm:px-3.5 py-1.5 text-xs font-black text-white shadow-md hover:scale-105 transition-all"
+          >
+            <span>🤖</span>
+            <span className="hidden sm:inline">Buscar com IA</span>
+          </button>
+
           {/* Botão Surpreenda-me */}
           <button
             onClick={handleOpenSurprise}
@@ -196,6 +208,14 @@ export function TopBar() {
         movies={surprisePool}
         onClose={() => setShowSurprise(false)}
       />
+
+      {/* Buscador de Filmes com IA Modal */}
+      <AiMovieFinderModal
+        isOpen={showAiFinder}
+        onClose={() => setShowAiFinder(false)}
+        onMovieAdded={() => router.refresh()}
+      />
     </>
   );
 }
+

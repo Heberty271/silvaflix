@@ -223,6 +223,55 @@ export interface CategoryWithCount {
   count: number;
 }
 
+export interface AIStreamOption {
+  provider_name: string;
+  player_url: string;
+  quality: string;
+  language: string;
+  player_type: string;
+  description?: string;
+  latency_ms?: number;
+  status?: string;
+  working?: boolean;
+}
+
+export interface AIMetadata {
+  tmdb_id: number;
+  imdb_id?: string | null;
+  media_type: string;
+  title: string;
+  original_title?: string | null;
+  synopsis?: string | null;
+  year?: number | null;
+  genre?: string | null;
+  duration_minutes?: number | null;
+  director?: string | null;
+  cast?: string | null;
+  poster_url?: string | null;
+  backdrop_url?: string | null;
+  trailer_youtube_id?: string | null;
+  collection_name?: string | null;
+  is_series: boolean;
+  season_number?: number | null;
+  episode_number?: number | null;
+}
+
+export interface AISearchResultResponse {
+  query: string;
+  found: boolean;
+  metadata: AIMetadata;
+  providers: AIStreamOption[];
+  total_providers: number;
+  best_provider?: AIStreamOption | null;
+}
+
+export interface AIImportStreamRequest {
+  player_url: string;
+  provider_name: string;
+  metadata: AIMetadata;
+  is_private?: boolean;
+}
+
 export interface Channel {
   id: number;
   name: string;
@@ -857,6 +906,22 @@ export const api = {
       { method: "POST" },
       token
     ),
+
+  // --- SilvaFlix IA (Buscador Inteligente de Filmes & Séries na Web) ---
+  aiSearchMovie: (payload: { query: string; year?: number }, token: string) =>
+    request<AISearchResultResponse>(
+      "/ai/search-movie",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  aiImportStream: (payload: AIImportStreamRequest, token: string) =>
+    request<Movie>(
+      "/ai/import-stream",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
 };
 
 export { ApiError };
+

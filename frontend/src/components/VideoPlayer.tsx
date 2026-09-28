@@ -312,8 +312,37 @@ export function VideoPlayer({
     setNextCountdown(null);
   };
 
+  const isEmbed = !!(
+    (movie?.video_url && (
+      movie.video_url.includes("vidlink.pro") ||
+      movie.video_url.includes("autoembed") ||
+      movie.video_url.includes("multiembed") ||
+      movie.video_url.includes("vidsrc") ||
+      movie.video_url.includes("2embed") ||
+      movie.video_url.includes("smashystream") ||
+      movie.video_url.includes("nontongo") ||
+      movie.video_url.includes("/embed") ||
+      (!movie.video_url.includes(".mp4") && !movie.video_url.includes(".m3u8") && !movie.video_url.includes(".mkv") && !movie.video_url.includes(".webm"))
+    )) ||
+    (src && (
+      src.includes("vidlink.pro") ||
+      src.includes("autoembed") ||
+      src.includes("multiembed") ||
+      src.includes("vidsrc") ||
+      src.includes("2embed") ||
+      src.includes("smashystream") ||
+      src.includes("nontongo")
+    ))
+  );
+  const activeEmbedUrl = movie?.video_url || src;
+
   // --- Inicialização de Fonte HLS ou Vídeo Direto ---
   useEffect(() => {
+    if (isEmbed) {
+      setLoading(false);
+      return;
+    }
+
     const video = videoRef.current;
     if (!video || !src) return;
 
@@ -360,7 +389,8 @@ export function VideoPlayer({
         hlsRef.current = null;
       }
     };
-  }, [src, movie?.video_url]);
+  }, [src, movie?.video_url, isEmbed]);
+
 
   // --- eventos do <video> ---
   useEffect(() => {
@@ -700,27 +730,40 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Elemento de Vídeo com Calibração */}
-      <video
-        ref={videoRef}
-        className="aspect-video w-full bg-black object-contain"
-        style={{
-          filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`,
-        }}
-        onClick={togglePlay}
-        playsInline
-        crossOrigin="anonymous"
-      >
-        {subtitleUrl && (
-          <track
-            kind="subtitles"
-            src={subtitleUrl}
-            srcLang="pt"
-            label="Português"
-            default={subtitlesEnabled}
+      {/* Elemento de Vídeo com Calibração ou Iframe Embed */}
+      {isEmbed ? (
+        <div className="relative aspect-video w-full bg-black">
+          <iframe
+            src={activeEmbedUrl}
+            title={title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            className="h-full w-full border-0"
           />
-        )}
-      </video>
+        </div>
+      ) : (
+        <video
+          ref={videoRef}
+          className="aspect-video w-full bg-black object-contain"
+          style={{
+            filter: `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`,
+          }}
+          onClick={togglePlay}
+          playsInline
+          crossOrigin="anonymous"
+        >
+          {subtitleUrl && (
+            <track
+              kind="subtitles"
+              src={subtitleUrl}
+              srcLang="pt"
+              label="Português"
+              default={subtitlesEnabled}
+            />
+          )}
+        </video>
+      )}
+
 
       {/* Sleep Toast */}
       {sleepToast && (

@@ -6,6 +6,7 @@ import { api, Movie, User, Channel, ApiError, Role, TMDBSearchResult, AutoScanRe
 import { AppShell } from "@/components/AppShell";
 import { IptvModal } from "@/components/IptvModal";
 import { ImportMovieWebModal } from "@/components/ImportMovieWebModal";
+import { AiMovieFinderModal } from "@/components/AiMovieFinderModal";
 
 export default function AdminPage() {
   const { token } = useAuth();
@@ -14,6 +15,7 @@ export default function AdminPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isIptvModalOpen, setIsIptvModalOpen] = useState(false);
   const [isWebMovieModalOpen, setIsWebMovieModalOpen] = useState(false);
+  const [isAiFinderOpen, setIsAiFinderOpen] = useState(false);
   const [selectedMovieIds, setSelectedMovieIds] = useState<Record<number, boolean>>({});
   const [movieSourceFilter, setMovieSourceFilter] = useState<string>("all");
   const [movieSearchQuery, setMovieSearchQuery] = useState<string>("");
@@ -325,6 +327,13 @@ export default function AdminPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setIsAiFinderOpen(true)}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand via-rose-600 to-brand2 px-5 py-3 font-black text-white shadow-xl transition-all hover:scale-105 hover:brightness-110"
+              >
+                <span>🤖</span>
+                <span>Buscar Filme com IA</span>
+              </button>
               <button
                 onClick={() => setIsWebMovieModalOpen(true)}
                 className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-5 py-3 font-black text-white shadow-xl transition-all hover:scale-105 hover:brightness-110"
@@ -894,9 +903,16 @@ export default function AdminPage() {
         token={token || ""}
         onSuccess={() => refresh()}
       />
+
+      <AiMovieFinderModal
+        isOpen={isAiFinderOpen}
+        onClose={() => setIsAiFinderOpen(false)}
+        onMovieAdded={() => refresh()}
+      />
     </AppShell>
   );
 }
+
 
 function Field({
   label,

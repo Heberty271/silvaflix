@@ -8,6 +8,7 @@ import { useProfile } from "@/lib/profile-context";
 import { api, Movie } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 import { MovieModal } from "@/components/MovieModal";
+import { AiMovieFinderModal } from "@/components/AiMovieFinderModal";
 import { getProfileRating } from "@/lib/ratings";
 
 const DECADES = [
@@ -43,6 +44,7 @@ function SearchContent() {
   const [sortBy, setSortBy] = useState<"recent" | "title" | "year" | "loved">("recent");
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [showAiFinder, setShowAiFinder] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -189,6 +191,34 @@ function SearchContent() {
           )}
         </div>
 
+        {/* Smart AI Finder Callout */}
+        <div className="rounded-2xl border border-brand/30 bg-gradient-to-r from-brand/10 via-purple-900/10 to-brand2/10 p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg">
+          <div className="flex items-center gap-3.5">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-brand to-rose-500 text-xl text-white shadow-lg">
+              🤖
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+                <span>Não encontrou o filme ou série que você queria no catálogo?</span>
+                <span className="rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-bold text-brand2 uppercase">
+                  Novo
+                </span>
+              </h3>
+              <p className="text-xs text-mute mt-0.5">
+                A <strong>SilvaFlix IA</strong> vasculha a internet para encontrar players funcionais em HD para você assistir agora ou salvar no catálogo!
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowAiFinder(true)}
+            className="w-full sm:w-auto whitespace-nowrap rounded-xl bg-gradient-to-r from-brand to-brand2 px-5 py-2.5 text-xs font-black text-white shadow-lg hover:scale-105 transition-all flex items-center justify-center gap-1.5"
+          >
+            <span>🔍</span>
+            <span>Buscar com IA 🚀</span>
+          </button>
+        </div>
+
         {/* Buscas Recentes */}
         {recentSearches.length > 0 && !query && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -210,6 +240,7 @@ function SearchContent() {
             </button>
           </div>
         )}
+
 
         {/* Filtros em Chips */}
         <div className="space-y-3 pt-2">
@@ -360,8 +391,18 @@ function SearchContent() {
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
         />
+
+        {/* Buscador de Filmes com IA Modal */}
+        <AiMovieFinderModal
+          isOpen={showAiFinder}
+          onClose={() => setShowAiFinder(false)}
+          onMovieAdded={() => {
+            if (token) api.listMovies(token).then(setMovies);
+          }}
+        />
       </div>
     </AppShell>
   );
 }
+
 
