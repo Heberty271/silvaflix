@@ -89,11 +89,16 @@ export function ImportMovieWebModal({
     }
   }
 
-  function handleCancelImport() {
+  async function handleCancelImport() {
     abortRef.current = true;
+    try {
+      await api.abortAllImports(token);
+    } catch {
+      // ignore
+    }
     setFeedback({
       type: "error",
-      message: "🛑 Cancelamento solicitado! A importação será interrompida ao fim do lote atual.",
+      message: "🛑 Importação cancelada e bloqueada com sucesso!",
     });
   }
 
@@ -212,6 +217,12 @@ export function ImportMovieWebModal({
     setFeedback(null);
     setProgress({ current: 0, total: lines.length, percent: 0 });
 
+    try {
+      await api.resetImportLock(token);
+    } catch {
+      // ignore
+    }
+
     const allItems = lines.map((line) => {
       const parts = line.split("|");
       const video_url = parts[0].trim();
@@ -327,6 +338,12 @@ export function ImportMovieWebModal({
     setIsImportingM3u(true);
     setFeedback(null);
     setProgress({ current: 0, total: selectedItems.length, percent: 0 });
+
+    try {
+      await api.resetImportLock(token);
+    } catch {
+      // ignore
+    }
 
     const itemsToImport = selectedItems.map((it) => ({
       video_url: it.video_url,

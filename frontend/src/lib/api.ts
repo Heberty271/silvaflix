@@ -640,6 +640,20 @@ export const api = {
       token
     ),
 
+  abortAllImports: (token: string) =>
+    request<{ ok: boolean; message: string }>(
+      "/admin/movies/abort-all-imports",
+      { method: "POST" },
+      token
+    ),
+
+  resetImportLock: (token: string) =>
+    request<{ ok: boolean; message: string }>(
+      "/admin/movies/reset-import-lock",
+      { method: "POST" },
+      token
+    ),
+
   listMovieSources: (token: string) =>
     request<MovieSource[]>("/movies/sources", {}, token),
 

@@ -992,12 +992,35 @@ async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
     )
 
 
+GLOBAL_IMPORT_CANCELLED = False
+
+
+@admin_router.post("/movies/abort-all-imports")
+def abort_all_imports():
+    """Trava e cancela imediatamente qualquer importação ativa no servidor."""
+    global GLOBAL_IMPORT_CANCELLED
+    GLOBAL_IMPORT_CANCELLED = True
+    return {"ok": True, "message": "Todas as importações ativas foram canceladas no servidor."}
+
+
+@admin_router.post("/movies/reset-import-lock")
+def reset_import_lock():
+    """Destrava o servidor para permitir novas importações."""
+    global GLOBAL_IMPORT_CANCELLED
+    GLOBAL_IMPORT_CANCELLED = False
+    return {"ok": True, "message": "Importações liberadas."}
+
+
 @admin_router.post("/movies/batch-import")
 async def batch_import_movies(
     payload: schemas.BatchMovieImportRequest,
     db: Session = Depends(get_db),
 ):
-    """Importa uma lista de filmes em massa da internet com busca inteligente opcional no TMDB."""
+    """Importa uma lista de filmes e séries em massa da internet com busca inteligente opcional no TMDB."""
+    global GLOBAL_IMPORT_CANCELLED
+    if GLOBAL_IMPORT_CANCELLED:
+        raise HTTPException(status_code=400, detail="Importação cancelada pelo administrador.")
+
     items = payload.items
     if not items:
         raise HTTPException(status_code=400, detail="Nenhum item fornecido para importação")
