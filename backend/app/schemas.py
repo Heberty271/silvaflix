@@ -349,11 +349,13 @@ class AIStreamOption(BaseModel):
     language: str = "Dublado / Legendado"
     player_type: str = "embed"
     is_direct: bool = False
+    is_dubbed: bool = False
     stream_type: str = "embed"
     description: Optional[str] = None
     latency_ms: Optional[int] = None
     status: Optional[str] = "online"
     working: Optional[bool] = True
+
 
 
 

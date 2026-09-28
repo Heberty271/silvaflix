@@ -230,12 +230,14 @@ export interface AIStreamOption {
   language: string;
   player_type: string;
   is_direct?: boolean;
+  is_dubbed?: boolean;
   stream_type?: string;
   description?: string;
   latency_ms?: number;
   status?: string;
   working?: boolean;
 }
+
 
 
 export interface AIMetadata {

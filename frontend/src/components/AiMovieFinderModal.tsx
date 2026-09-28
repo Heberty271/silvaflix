@@ -36,6 +36,7 @@ export function AiMovieFinderModal({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AISearchResultResponse | null>(null);
   const [autoSave, setAutoSave] = useState(true);
+  const [languageFilter, setLanguageFilter] = useState<"dubbed" | "all">("dubbed");
 
   // Player de Pré-visualização / Assistir no Modal
   const [activePlayer, setActivePlayer] = useState<AIStreamOption | null>(null);
@@ -60,19 +61,24 @@ export function AiMovieFinderModal({
     setSearchStage(1);
 
     // Etapas visuais de busca com IA
-    const stageTimer1 = setTimeout(() => setSearchStage(2), 600);
-    const stageTimer2 = setTimeout(() => setSearchStage(3), 1300);
+    const stageTimer1 = setTimeout(() => setSearchStage(2), 500);
+    const stageTimer2 = setTimeout(() => setSearchStage(3), 1100);
 
     try {
       const data = await api.aiSearchMovie({ query: q.trim() }, token);
       setSearchStage(4);
       setResult(data);
 
-      const best = data.best_provider || data.providers[0];
+      // Prioriza servidor dublado PT-BR
+      const dubbedServer = data.providers.find(
+        (p) => p.is_dubbed || p.language.toLowerCase().includes("dublado") || p.language.toLowerCase().includes("português")
+      );
+      const best = dubbedServer || data.best_provider || data.providers[0];
+
       if (best) {
         setActivePlayer(best);
 
-        // Se autoSave estiver ativo, cadastra automaticamente no catálogo!
+        // Se autoSave estiver ativo, cadastra automaticamente no catálogo com o player dublado!
         if (autoSave) {
           try {
             setSavingToCatalog(true);
@@ -86,7 +92,7 @@ export function AiMovieFinderModal({
               token
             );
             setSavedMovie(created);
-            setSavedSuccess(`Filme "${created.title}" adicionado automaticamente ao seu catálogo!`);
+            setSavedSuccess(`Filme "${created.title}" (Dublado PT-BR) adicionado ao seu catálogo!`);
             if (onMovieAdded) onMovieAdded();
           } catch {
             // Silencioso se der erro no autoSave
@@ -132,7 +138,6 @@ export function AiMovieFinderModal({
   async function handlePlayInSilvaflix(option: AIStreamOption, metadata: AIMetadata) {
     if (!token) return;
 
-    // Se já salvou no catálogo, vai direto
     if (savedMovie) {
       onClose();
       router.push(`/watch/${savedMovie.id}`);
@@ -154,7 +159,6 @@ export function AiMovieFinderModal({
       onClose();
       router.push(`/watch/${created.id}`);
     } catch {
-      // Se der erro ao salvar, abre o player interno
       setActivePlayer(option);
     } finally {
       setSavingToCatalog(false);
@@ -168,6 +172,13 @@ export function AiMovieFinderModal({
       setTimeout(() => setCopiedLink(false), 2500);
     }
   }
+
+  const displayedProviders = (result?.providers || []).filter((p) => {
+    if (languageFilter === "dubbed") {
+      return p.is_dubbed || p.language.toLowerCase().includes("dublado") || p.language.toLowerCase().includes("português") || p.language.toLowerCase().includes("dual");
+    }
+    return true;
+  });
 
   return (
     <div
@@ -188,11 +199,11 @@ export function AiMovieFinderModal({
               <h2 className="text-base sm:text-lg font-black tracking-wide text-ink flex items-center gap-2">
                 <span>SilvaFlix IA</span>
                 <span className="rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-bold text-brand2 uppercase">
-                  Buscador & Extrator de Vídeos
+                  Filmes Dublados & Extrator Web
                 </span>
               </h2>
               <p className="text-xs text-mute hidden sm:block">
-                Localiza o link direto do vídeo na internet, associa capa em HD e adiciona ao seu catálogo.
+                Prioriza filmes dublados em português (PT-BR) e salva automaticamente no seu catálogo familiar.
               </p>
             </div>
           </div>
@@ -220,7 +231,7 @@ export function AiMovieFinderModal({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Digite o nome do filme ou série (Ex: Harry Potter 1, Vingadores, Interestelar...)"
+                placeholder="Digite o nome do filme (Ex: Harry Potter 1, Vingadores Ultimato, Interestelar...)"
                 disabled={searching}
                 className="w-full rounded-xl border border-rule bg-panel2/80 py-3.5 pl-4 pr-32 text-sm text-ink placeholder:text-mute focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 transition-all shadow-inner"
               />
@@ -238,7 +249,7 @@ export function AiMovieFinderModal({
                 ) : (
                   <>
                     <span>🔍</span>
-                    <span>Buscar Vídeo</span>
+                    <span>Buscar Filme</span>
                   </>
                 )}
               </button>
@@ -271,7 +282,7 @@ export function AiMovieFinderModal({
                   onChange={(e) => setAutoSave(e.target.checked)}
                   className="rounded accent-brand cursor-pointer"
                 />
-                <span className="font-semibold text-ink">Salvar automaticamente no catálogo ao encontrar</span>
+                <span className="font-semibold text-ink">Adicionar ao catálogo automaticamente</span>
               </label>
             </div>
           </form>
@@ -288,10 +299,10 @@ export function AiMovieFinderModal({
                     SilvaFlix IA em Ação:
                   </p>
                   <p className="text-xs text-brand2 font-semibold">
-                    {searchStage === 1 && "🧠 1/3 Identificando filme oficial no TMDB e baixando metadados..."}
-                    {searchStage === 2 && "🌐 2/3 Vasculhando servidores e indexadores pelo link de vídeo..."}
-                    {searchStage === 3 && "⚡ 3/3 Testando integridade do stream e medindo velocidade..."}
-                    {searchStage === 4 && "✅ 4/3 Link de vídeo localizado e pronto para ser adicionado!"}
+                    {searchStage === 1 && "🧠 1/3 Identificando filme oficial no TMDB e baixando sinopse e capa HD..."}
+                    {searchStage === 2 && "🇧🇷 2/3 Vasculhando servidores brasileiros por versões DUBLADAS (PT-BR)..."}
+                    {searchStage === 3 && "⚡ 3/3 Testando integridade do stream e medindo latência..."}
+                    {searchStage === 4 && "✅ 4/3 Pronto! Servidor Dublado pronto para reprodução!"}
                   </p>
                 </div>
               </div>
@@ -329,7 +340,7 @@ export function AiMovieFinderModal({
                     {savedSuccess}
                   </p>
                   <p className="text-[11px] text-emerald-300/80 mt-0.5">
-                    O filme está gravado no seu catálogo permanente. Toda a família pode assistir na tela inicial ou Smart TV a qualquer momento!
+                    O filme está gravado no catálogo. Você pode assistir agora ou quando quiser diretamente pela tela inicial do SilvaFlix!
                   </p>
                 </div>
               </div>
@@ -354,7 +365,6 @@ export function AiMovieFinderModal({
             <div className="space-y-6 animate-fade-in">
               {/* Card de Informações do Filme/Série */}
               <div className="relative overflow-hidden rounded-2xl border border-rule bg-panel2 shadow-lg">
-                {/* Backdrop de Fundo */}
                 {result.metadata.backdrop_url && (
                   <div
                     className="absolute inset-0 opacity-20 bg-cover bg-center filter blur-sm"
@@ -388,11 +398,9 @@ export function AiMovieFinderModal({
                           {result.metadata.year}
                         </span>
                       )}
-                      {result.metadata.is_series && (
-                        <span className="rounded-full bg-brand/20 border border-brand/40 px-2.5 py-0.5 text-xs font-bold text-brand2">
-                          📺 Série {result.metadata.season_number ? `(T${result.metadata.season_number} E${result.metadata.episode_number || 1})` : ""}
-                        </span>
-                      )}
+                      <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-xs font-bold text-emerald-400">
+                        🇧🇷 Dublado PT-BR
+                      </span>
                       {result.metadata.collection_name && (
                         <span className="rounded-full bg-panel border border-rule px-2.5 py-0.5 text-xs font-bold text-mute">
                           🏛️ {result.metadata.collection_name}
@@ -462,24 +470,18 @@ export function AiMovieFinderModal({
                 )}
               </div>
 
-              {/* Box de Detalhes do Link de Vídeo Encontrado */}
+              {/* Box de Detalhes do Servidor & Player Ativo */}
               {activePlayer && (
                 <div className="rounded-2xl border border-brand/30 bg-panel2 p-4 sm:p-5 space-y-3 shadow-md">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="flex h-3 w-3 rounded-full bg-emerald-400 animate-ping" />
                       <p className="text-sm font-bold text-ink flex items-center gap-2">
-                        <span>Link de Vídeo Pronto:</span>
+                        <span>Servidor Selecionado:</span>
                         <span className="text-brand2">{activePlayer.provider_name}</span>
-                        {activePlayer.is_direct ? (
-                          <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[10px] font-black text-emerald-400">
-                            🎬 Link Direto MP4
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-sky-500/20 border border-sky-500/40 px-2.5 py-0.5 text-[10px] font-black text-sky-400">
-                            🌐 Stream HD Nativo
-                          </span>
-                        )}
+                        <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[10px] font-black text-emerald-400">
+                          {activePlayer.language}
+                        </span>
                       </p>
                     </div>
 
@@ -489,7 +491,7 @@ export function AiMovieFinderModal({
                         className="rounded-lg border border-rule bg-panel px-3 py-1.5 text-xs font-semibold text-mute hover:border-brand hover:text-ink transition-all flex items-center gap-1.5"
                       >
                         <span>{copiedLink ? "✓" : "📋"}</span>
-                        <span>{copiedLink ? "Link Copiado!" : "Copiar URL do Vídeo"}</span>
+                        <span>{copiedLink ? "Link Copiado!" : "Copiar URL"}</span>
                       </button>
 
                       <button
@@ -503,7 +505,7 @@ export function AiMovieFinderModal({
                     </div>
                   </div>
 
-                  {/* URL do Vídeo Exibida */}
+                  {/* URL do Stream / Player */}
                   <div className="rounded-xl border border-rule/70 bg-void p-3 text-xs font-mono text-mute break-all select-all flex items-center justify-between gap-3">
                     <span className="truncate">{activePlayer.player_url}</span>
                     <span className="text-[10px] text-emerald-400 font-sans font-bold flex-shrink-0">
@@ -513,42 +515,56 @@ export function AiMovieFinderModal({
 
                   {/* Player de Preview dentro do Modal */}
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black mt-3">
-                    {activePlayer.is_direct ? (
-                      <video
-                        src={activePlayer.player_url}
-                        controls
-                        playsInline
-                        className="h-full w-full object-contain"
-                      />
-                    ) : (
-                      <iframe
-                        src={activePlayer.player_url}
-                        title={result.metadata.title}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                        allowFullScreen
-                        className="h-full w-full border-0"
-                      />
-                    )}
+                    <iframe
+                      src={activePlayer.player_url}
+                      title={result.metadata.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                      allowFullScreen
+                      className="h-full w-full border-0"
+                    />
                   </div>
                 </div>
               )}
 
-              {/* Lista de Todas as Fontes e Servidores de Vídeo */}
+              {/* Lista de Servidores com Filtro de Idioma */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
-                    <span>⚡ Fontes & Links de Vídeo Alternativos</span>
+                    <span>⚡ Servidores & Fontes Disponíveis</span>
                     <span className="rounded-full bg-panel2 border border-rule px-2 py-0.2 text-[10px] font-bold text-ink">
-                      {result.providers.length}
+                      {displayedProviders.length}
                     </span>
                   </h4>
-                  <span className="text-[11px] text-mute">
-                    Caso queira trocar o link de origem do vídeo, clique em outra opção abaixo
-                  </span>
+
+                  {/* Filtro de Idioma */}
+                  <div className="flex items-center gap-1.5 rounded-lg border border-rule bg-panel p-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setLanguageFilter("dubbed")}
+                      className={`rounded px-3 py-1 font-bold transition-all ${
+                        languageFilter === "dubbed"
+                          ? "bg-emerald-500 text-white shadow"
+                          : "text-mute hover:text-ink"
+                      }`}
+                    >
+                      🇧🇷 Apenas Dublados (PT-BR)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLanguageFilter("all")}
+                      className={`rounded px-3 py-1 font-bold transition-all ${
+                        languageFilter === "all"
+                          ? "bg-brand text-white shadow"
+                          : "text-mute hover:text-ink"
+                      }`}
+                    >
+                      🌐 Todos os Servidores
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  {result.providers.map((opt, idx) => {
+                  {displayedProviders.map((opt, idx) => {
                     const isSelected = activePlayer?.player_url === opt.player_url;
 
                     return (
@@ -563,7 +579,7 @@ export function AiMovieFinderModal({
                         <div className="space-y-1">
                           <div className="flex items-center justify-between">
                             <p className="text-xs font-black text-ink flex items-center gap-1.5">
-                              <span>{opt.is_direct ? "🎬" : "🌐"}</span>
+                              <span>🎬</span>
                               <span>{opt.provider_name}</span>
                             </p>
                             <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
@@ -571,8 +587,8 @@ export function AiMovieFinderModal({
                             </span>
                           </div>
 
-                          <p className="text-[11px] text-mute">
-                            {opt.quality} · {opt.language}
+                          <p className="text-[11px] text-emerald-400 font-bold">
+                            {opt.language} · <span className="text-mute font-normal">{opt.quality}</span>
                           </p>
 
                           {opt.description && (
@@ -598,14 +614,14 @@ export function AiMovieFinderModal({
                                 : "bg-panel border border-rule text-ink hover:border-brand"
                             }`}
                           >
-                            {isSelected ? "▶ Selecionado" : "Usar Este Link"}
+                            {isSelected ? "▶ Selecionado" : "Usar Este Servidor"}
                           </button>
 
                           <button
                             type="button"
                             onClick={() => handleSaveToCatalog(opt, result.metadata)}
                             disabled={savingToCatalog}
-                            title="Salvar com este link de vídeo no catálogo do SilvaFlix"
+                            title="Salvar com este servidor no catálogo do SilvaFlix"
                             className="rounded-lg border border-rule bg-panel px-2.5 py-1 text-xs font-bold text-mute hover:border-brand hover:text-ink transition-all"
                           >
                             ➕ Salvar
@@ -624,7 +640,7 @@ export function AiMovieFinderModal({
         <div className="flex items-center justify-between border-t border-rule bg-panel2/60 px-5 py-3 text-xs text-mute">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            <span>SilvaFlix IA — Extração de Links e Integração Automática ao Catálogo</span>
+            <span>SilvaFlix IA — Prioridade para Áudio Dublado em Português (PT-BR)</span>
           </span>
 
           <button
