@@ -348,10 +348,13 @@ class AIStreamOption(BaseModel):
     quality: str = "1080p Full HD"
     language: str = "Dublado / Legendado"
     player_type: str = "embed"
+    is_direct: bool = False
+    stream_type: str = "embed"
     description: Optional[str] = None
     latency_ms: Optional[int] = None
     status: Optional[str] = "online"
     working: Optional[bool] = True
+
 
 
 class AIMetadata(BaseModel):

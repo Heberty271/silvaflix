@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, AISearchResultResponse, AIStreamOption, AIMetadata } from "@/lib/api";
+import { api, AISearchResultResponse, AIStreamOption, AIMetadata, Movie } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 interface AiMovieFinderModalProps {
@@ -35,12 +35,15 @@ export function AiMovieFinderModal({
   const [searchStage, setSearchStage] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AISearchResultResponse | null>(null);
+  const [autoSave, setAutoSave] = useState(true);
 
   // Player de Pré-visualização / Assistir no Modal
   const [activePlayer, setActivePlayer] = useState<AIStreamOption | null>(null);
   const [savingToCatalog, setSavingToCatalog] = useState(false);
+  const [savedMovie, setSavedMovie] = useState<Movie | null>(null);
   const [savedSuccess, setSavedSuccess] = useState<string | null>(null);
   const [trailerOpen, setTrailerOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   if (!isOpen) return null;
 
@@ -51,20 +54,46 @@ export function AiMovieFinderModal({
     setError(null);
     setResult(null);
     setActivePlayer(null);
+    setSavedMovie(null);
     setSavedSuccess(null);
     setSearching(true);
     setSearchStage(1);
 
     // Etapas visuais de busca com IA
-    const stageTimer1 = setTimeout(() => setSearchStage(2), 700);
-    const stageTimer2 = setTimeout(() => setSearchStage(3), 1500);
+    const stageTimer1 = setTimeout(() => setSearchStage(2), 600);
+    const stageTimer2 = setTimeout(() => setSearchStage(3), 1300);
 
     try {
       const data = await api.aiSearchMovie({ query: q.trim() }, token);
       setSearchStage(4);
       setResult(data);
-      if (data.providers.length > 0) {
-        setActivePlayer(data.best_provider || data.providers[0]);
+
+      const best = data.best_provider || data.providers[0];
+      if (best) {
+        setActivePlayer(best);
+
+        // Se autoSave estiver ativo, cadastra automaticamente no catálogo!
+        if (autoSave) {
+          try {
+            setSavingToCatalog(true);
+            const created = await api.aiImportStream(
+              {
+                player_url: best.player_url,
+                provider_name: best.provider_name,
+                metadata: data.metadata,
+                is_private: false,
+              },
+              token
+            );
+            setSavedMovie(created);
+            setSavedSuccess(`Filme "${created.title}" adicionado automaticamente ao seu catálogo!`);
+            if (onMovieAdded) onMovieAdded();
+          } catch {
+            // Silencioso se der erro no autoSave
+          } finally {
+            setSavingToCatalog(false);
+          }
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro ao pesquisar filme na web com IA.";
@@ -90,7 +119,8 @@ export function AiMovieFinderModal({
         },
         token
       );
-      setSavedSuccess(`Filme "${created.title}" salvo no catálogo com sucesso!`);
+      setSavedMovie(created);
+      setSavedSuccess(`Filme "${created.title}" salvo com sucesso no catálogo!`);
       if (onMovieAdded) onMovieAdded();
     } catch (err: unknown) {
       alert("Erro ao salvar no catálogo: " + (err instanceof Error ? err.message : "Erro desconhecido"));
@@ -101,9 +131,16 @@ export function AiMovieFinderModal({
 
   async function handlePlayInSilvaflix(option: AIStreamOption, metadata: AIMetadata) {
     if (!token) return;
+
+    // Se já salvou no catálogo, vai direto
+    if (savedMovie) {
+      onClose();
+      router.push(`/watch/${savedMovie.id}`);
+      return;
+    }
+
     setSavingToCatalog(true);
     try {
-      // Salva ou obtém e redireciona direto para a página de assistir
       const created = await api.aiImportStream(
         {
           player_url: option.player_url,
@@ -121,6 +158,14 @@ export function AiMovieFinderModal({
       setActivePlayer(option);
     } finally {
       setSavingToCatalog(false);
+    }
+  }
+
+  function handleCopyLink(url: string) {
+    if (navigator?.clipboard) {
+      navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
     }
   }
 
@@ -143,11 +188,11 @@ export function AiMovieFinderModal({
               <h2 className="text-base sm:text-lg font-black tracking-wide text-ink flex items-center gap-2">
                 <span>SilvaFlix IA</span>
                 <span className="rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-bold text-brand2 uppercase">
-                  Buscador Web Inteligente
+                  Buscador & Extrator de Vídeos
                 </span>
               </h2>
               <p className="text-xs text-mute hidden sm:block">
-                Vasculha a internet por filmes e séries e entrega players funcionais em HD.
+                Localiza o link direto do vídeo na internet, associa capa em HD e adiciona ao seu catálogo.
               </p>
             </div>
           </div>
@@ -193,28 +238,41 @@ export function AiMovieFinderModal({
                 ) : (
                   <>
                     <span>🔍</span>
-                    <span>Buscar com IA</span>
+                    <span>Buscar Vídeo</span>
                   </>
                 )}
               </button>
             </div>
 
-            {/* Sugestões Rápidas */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[11px] font-semibold text-mute mr-1">Sugestões:</span>
-              {QUICK_SUGGESTIONS.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => {
-                    setQuery(item);
-                    handleSearch(item);
-                  }}
-                  className="rounded-lg border border-rule bg-panel2 px-2.5 py-1 text-[11px] font-medium text-mute hover:border-brand hover:text-ink transition-all hover:scale-105"
-                >
-                  {item}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              {/* Sugestões Rápidas */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-mute mr-1">Sugestões:</span>
+                {QUICK_SUGGESTIONS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => {
+                      setQuery(item);
+                      handleSearch(item);
+                    }}
+                    className="rounded-lg border border-rule bg-panel2 px-2.5 py-1 text-[11px] font-medium text-mute hover:border-brand hover:text-ink transition-all hover:scale-105"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+
+              {/* Opção de Salvar Automaticamente */}
+              <label className="flex items-center gap-2 text-xs text-mute cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoSave}
+                  onChange={(e) => setAutoSave(e.target.checked)}
+                  className="rounded accent-brand cursor-pointer"
+                />
+                <span className="font-semibold text-ink">Salvar automaticamente no catálogo ao encontrar</span>
+              </label>
             </div>
           </form>
 
@@ -230,10 +288,10 @@ export function AiMovieFinderModal({
                     SilvaFlix IA em Ação:
                   </p>
                   <p className="text-xs text-brand2 font-semibold">
-                    {searchStage === 1 && "🧠 1/3 Identificando obra canônica e detalhes no TMDB..."}
-                    {searchStage === 2 && "🌐 2/3 Vasculhando indexadores e servidores de stream..."}
-                    {searchStage === 3 && "⚡ 3/3 Testando latência e verificando players funcionais..."}
-                    {searchStage === 4 && "✅ 4/3 Pronto! Montando players..."}
+                    {searchStage === 1 && "🧠 1/3 Identificando filme oficial no TMDB e baixando metadados..."}
+                    {searchStage === 2 && "🌐 2/3 Vasculhando servidores e indexadores pelo link de vídeo..."}
+                    {searchStage === 3 && "⚡ 3/3 Testando integridade do stream e medindo velocidade..."}
+                    {searchStage === 4 && "✅ 4/3 Link de vídeo localizado e pronto para ser adicionado!"}
                   </p>
                 </div>
               </div>
@@ -263,14 +321,31 @@ export function AiMovieFinderModal({
 
           {/* Feedback de Filme Salvo no Catálogo */}
           {savedSuccess && (
-            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs font-bold text-emerald-400 flex items-center justify-between">
-              <span>🎉 {savedSuccess}</span>
-              <button
-                onClick={() => setSavedSuccess(null)}
-                className="text-emerald-400/80 hover:text-emerald-300"
-              >
-                ✕
-              </button>
+            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 sm:p-5 text-xs text-emerald-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🎉</span>
+                <div>
+                  <p className="font-bold text-sm text-emerald-400">
+                    {savedSuccess}
+                  </p>
+                  <p className="text-[11px] text-emerald-300/80 mt-0.5">
+                    O filme está gravado no seu catálogo permanente. Toda a família pode assistir na tela inicial ou Smart TV a qualquer momento!
+                  </p>
+                </div>
+              </div>
+
+              {savedMovie && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    router.push(`/watch/${savedMovie.id}`);
+                  }}
+                  className="whitespace-nowrap rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black text-white shadow hover:bg-emerald-600 transition-all flex items-center gap-1.5"
+                >
+                  <span>▶️</span>
+                  <span>Assistir no SilvaFlix Agora</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -345,19 +420,31 @@ export function AiMovieFinderModal({
                       </p>
                     )}
 
-                    {/* Botão de Trailer */}
-                    {result.metadata.trailer_youtube_id && (
-                      <div className="pt-1">
+                    {/* Botões de Ação Rápida */}
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      {activePlayer && (
+                        <button
+                          type="button"
+                          onClick={() => handlePlayInSilvaflix(activePlayer, result.metadata)}
+                          disabled={savingToCatalog}
+                          className="rounded-xl bg-gradient-to-r from-brand to-rose-600 px-5 py-2.5 text-xs font-black text-white shadow-lg hover:scale-105 transition-all flex items-center gap-2"
+                        >
+                          <span>▶️</span>
+                          <span>{savedMovie ? "Abrir Filme no SilvaFlix" : "Adicionar e Assistir Agora"}</span>
+                        </button>
+                      )}
+
+                      {result.metadata.trailer_youtube_id && (
                         <button
                           type="button"
                           onClick={() => setTrailerOpen(!trailerOpen)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-rule bg-panel px-3 py-1 text-xs font-semibold text-mute hover:border-brand hover:text-ink transition-all"
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-rule bg-panel px-3.5 py-2 text-xs font-semibold text-mute hover:border-brand hover:text-ink transition-all"
                         >
                           <span>🎬</span>
-                          <span>{trailerOpen ? "Fechar Trailer" : "Assistir Trailer Oficial"}</span>
+                          <span>{trailerOpen ? "Fechar Trailer" : "Trailer Oficial"}</span>
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -375,72 +462,94 @@ export function AiMovieFinderModal({
                 )}
               </div>
 
-              {/* Player Integrado / Preview */}
+              {/* Box de Detalhes do Link de Vídeo Encontrado */}
               {activePlayer && (
-                <div className="space-y-3 rounded-2xl border border-brand/40 bg-black p-3 shadow-2xl">
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                <div className="rounded-2xl border border-brand/30 bg-panel2 p-4 sm:p-5 space-y-3 shadow-md">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-ping" />
-                      <p className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <span>▶️ Player Ativo:</span>
+                      <span className="flex h-3 w-3 rounded-full bg-emerald-400 animate-ping" />
+                      <p className="text-sm font-bold text-ink flex items-center gap-2">
+                        <span>Link de Vídeo Pronto:</span>
                         <span className="text-brand2">{activePlayer.provider_name}</span>
-                        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-mute">
-                          {activePlayer.quality}
-                        </span>
+                        {activePlayer.is_direct ? (
+                          <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[10px] font-black text-emerald-400">
+                            🎬 Link Direto MP4
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-sky-500/20 border border-sky-500/40 px-2.5 py-0.5 text-[10px] font-black text-sky-400">
+                            🌐 Stream HD Nativo
+                          </span>
+                        )}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleSaveToCatalog(activePlayer, result.metadata)}
-                        disabled={savingToCatalog}
-                        className="rounded-lg bg-panel2 border border-rule px-3 py-1 text-xs font-bold text-ink hover:border-brand transition-all flex items-center gap-1"
+                        onClick={() => handleCopyLink(activePlayer.player_url)}
+                        className="rounded-lg border border-rule bg-panel px-3 py-1.5 text-xs font-semibold text-mute hover:border-brand hover:text-ink transition-all flex items-center gap-1.5"
                       >
-                        <span>➕</span>
-                        <span>{savingToCatalog ? "Salvando..." : "Salvar no Catálogo"}</span>
+                        <span>{copiedLink ? "✓" : "📋"}</span>
+                        <span>{copiedLink ? "Link Copiado!" : "Copiar URL do Vídeo"}</span>
                       </button>
 
                       <button
-                        onClick={() => handlePlayInSilvaflix(activePlayer, result.metadata)}
-                        disabled={savingToCatalog}
-                        className="rounded-lg bg-brand px-3.5 py-1 text-xs font-black text-white hover:bg-brand2 transition-all flex items-center gap-1 shadow"
+                        onClick={() => handleSaveToCatalog(activePlayer, result.metadata)}
+                        disabled={savingToCatalog || !!savedMovie}
+                        className="rounded-lg bg-brand px-3.5 py-1.5 text-xs font-black text-white hover:bg-brand2 transition-all flex items-center gap-1.5 shadow disabled:opacity-60"
                       >
-                        <span>📺</span>
-                        <span>Abrir na Tela Cheia</span>
+                        <span>{savedMovie ? "✓ Salvo" : "➕"}</span>
+                        <span>{savingToCatalog ? "Salvando..." : savedMovie ? "Salvo no Catálogo" : "Salvar no Catálogo"}</span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Frame do Player */}
-                  <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black">
-                    <iframe
-                      src={activePlayer.player_url}
-                      title={result.metadata.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                      allowFullScreen
-                      className="h-full w-full border-0"
-                    />
+                  {/* URL do Vídeo Exibida */}
+                  <div className="rounded-xl border border-rule/70 bg-void p-3 text-xs font-mono text-mute break-all select-all flex items-center justify-between gap-3">
+                    <span className="truncate">{activePlayer.player_url}</span>
+                    <span className="text-[10px] text-emerald-400 font-sans font-bold flex-shrink-0">
+                      ⚡ {activePlayer.latency_ms || 120}ms
+                    </span>
+                  </div>
+
+                  {/* Player de Preview dentro do Modal */}
+                  <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black mt-3">
+                    {activePlayer.is_direct ? (
+                      <video
+                        src={activePlayer.player_url}
+                        controls
+                        playsInline
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <iframe
+                        src={activePlayer.player_url}
+                        title={result.metadata.title}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                        allowFullScreen
+                        className="h-full w-full border-0"
+                      />
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Lista de Provedores & Servidores Encontrados */}
+              {/* Lista de Todas as Fontes e Servidores de Vídeo */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
-                    <span>⚡ Servidores & Players Disponíveis</span>
+                    <span>⚡ Fontes & Links de Vídeo Alternativos</span>
                     <span className="rounded-full bg-panel2 border border-rule px-2 py-0.2 text-[10px] font-bold text-ink">
                       {result.providers.length}
                     </span>
                   </h4>
                   <span className="text-[11px] text-mute">
-                    Se um servidor não carregar, clique em outro servidor abaixo
+                    Caso queira trocar o link de origem do vídeo, clique em outra opção abaixo
                   </span>
                 </div>
 
                 <div className="grid gap-2.5 sm:grid-cols-2">
                   {result.providers.map((opt, idx) => {
-                    const isSelected = activePlayer?.provider_name === opt.provider_name;
+                    const isSelected = activePlayer?.player_url === opt.player_url;
 
                     return (
                       <div
@@ -454,7 +563,7 @@ export function AiMovieFinderModal({
                         <div className="space-y-1">
                           <div className="flex items-center justify-between">
                             <p className="text-xs font-black text-ink flex items-center gap-1.5">
-                              <span>🎬</span>
+                              <span>{opt.is_direct ? "🎬" : "🌐"}</span>
                               <span>{opt.provider_name}</span>
                             </p>
                             <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
@@ -477,21 +586,26 @@ export function AiMovieFinderModal({
                         <div className="mt-3 flex items-center justify-end gap-2 pt-2 border-t border-rule/50">
                           <button
                             type="button"
-                            onClick={() => setActivePlayer(opt)}
+                            onClick={() => {
+                              setActivePlayer(opt);
+                              if (autoSave) {
+                                handleSaveToCatalog(opt, result.metadata);
+                              }
+                            }}
                             className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
                               isSelected
                                 ? "bg-brand text-white shadow"
                                 : "bg-panel border border-rule text-ink hover:border-brand"
                             }`}
                           >
-                            {isSelected ? "▶ Tocando Agora" : "▶ Testar Player"}
+                            {isSelected ? "▶ Selecionado" : "Usar Este Link"}
                           </button>
 
                           <button
                             type="button"
                             onClick={() => handleSaveToCatalog(opt, result.metadata)}
                             disabled={savingToCatalog}
-                            title="Salvar filme permanentemente no catálogo do SilvaFlix"
+                            title="Salvar com este link de vídeo no catálogo do SilvaFlix"
                             className="rounded-lg border border-rule bg-panel px-2.5 py-1 text-xs font-bold text-mute hover:border-brand hover:text-ink transition-all"
                           >
                             ➕ Salvar
@@ -510,7 +624,7 @@ export function AiMovieFinderModal({
         <div className="flex items-center justify-between border-t border-rule bg-panel2/60 px-5 py-3 text-xs text-mute">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            <span>SilvaFlix IA Integrado ao TMDB & Indexadores Globais</span>
+            <span>SilvaFlix IA — Extração de Links e Integração Automática ao Catálogo</span>
           </span>
 
           <button

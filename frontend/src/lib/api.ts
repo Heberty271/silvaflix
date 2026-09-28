@@ -229,11 +229,14 @@ export interface AIStreamOption {
   quality: string;
   language: string;
   player_type: string;
+  is_direct?: boolean;
+  stream_type?: string;
   description?: string;
   latency_ms?: number;
   status?: string;
   working?: boolean;
 }
+
 
 export interface AIMetadata {
   tmdb_id: number;
