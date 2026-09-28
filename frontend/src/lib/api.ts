@@ -633,6 +633,13 @@ export const api = {
       token
     ),
 
+  clearAllExternalMovies: (token: string) =>
+    request<{ deleted: number; ok: boolean }>(
+      "/admin/movies/clear-external",
+      { method: "POST" },
+      token
+    ),
+
   listMovieSources: (token: string) =>
     request<MovieSource[]>("/movies/sources", {}, token),
 

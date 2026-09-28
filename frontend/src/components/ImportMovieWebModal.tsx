@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   api,
   TMDBSearchResult,
   ParseMovieM3UResponse,
   MovieSource,
-  ParsedMovieItem,
 } from "@/lib/api";
 
 interface ImportMovieWebModalProps {
@@ -16,7 +15,7 @@ interface ImportMovieWebModalProps {
   onSuccess: () => void;
 }
 
-type TabType = "single" | "batch" | "m3u" | "sources";
+type TabType = "m3u" | "single" | "batch" | "sources";
 type M3uFilterType = "all" | "movies" | "series";
 
 export function ImportMovieWebModal({
@@ -35,7 +34,6 @@ export function ImportMovieWebModal({
   const [seriesTitle, setSeriesTitle] = useState("");
   const [seasonNum, setSeasonNum] = useState<number | "">("");
   const [episodeNum, setEpisodeNum] = useState<number | "">("");
-  const [episodeTitle, setEpisodeTitle] = useState("");
   const [tmdbSearchQuery, setTmdbSearchQuery] = useState("");
   const [tmdbResults, setTmdbResults] = useState<TMDBSearchResult[]>([]);
   const [selectedTmdb, setSelectedTmdb] = useState<TMDBSearchResult | null>(null);
@@ -60,13 +58,15 @@ export function ImportMovieWebModal({
   const [m3uSearchPreview, setM3uSearchPreview] = useState("");
   const [isImportingM3u, setIsImportingM3u] = useState(false);
 
-  // Barra de progresso para importação em lotes
+  // Controle de cancelamento & progresso
+  const abortRef = useRef<boolean>(false);
   const [progress, setProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
 
   // Tab 4: Gerenciar Fontes
   const [sources, setSources] = useState<MovieSource[]>([]);
   const [isLoadingSources, setIsLoadingSources] = useState(false);
   const [deletingSource, setDeletingSource] = useState<string | null>(null);
+  const [isClearingAll, setIsClearingAll] = useState(false);
 
   // Mensagens
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -87,6 +87,14 @@ export function ImportMovieWebModal({
     } finally {
       setIsLoadingSources(false);
     }
+  }
+
+  function handleCancelImport() {
+    abortRef.current = true;
+    setFeedback({
+      type: "error",
+      message: "🛑 Cancelamento solicitado! A importação será interrompida ao fim do lote atual.",
+    });
   }
 
   // --- TMDB Search ---
@@ -123,7 +131,6 @@ export function ImportMovieWebModal({
           setSingleTitle(cleanName);
           setTmdbSearchQuery(cleanName);
 
-          // Verifica se parece episódio de série
           const matchSe = cleanName.match(/\bS(\d{1,2})[\s\.\-_]*E(\d{1,3})\b/i) || cleanName.match(/\b(\d{1,2})x(\d{1,3})\b/i);
           if (matchSe) {
             setIsSeries(true);
@@ -168,7 +175,7 @@ export function ImportMovieWebModal({
         token
       );
 
-      setFeedback({ type: "success", message: isSeries ? "Episódio adicionado ao catálogo com sucesso!" : "Filme adicionado ao catálogo com sucesso!" });
+      setFeedback({ type: "success", message: isSeries ? "Episódio adicionado ao catálogo!" : "Filme adicionado ao catálogo!" });
       setSingleUrl("");
       setSingleTitle("");
       setSeriesTitle("");
@@ -184,7 +191,7 @@ export function ImportMovieWebModal({
     }
   }
 
-  // --- Submissão: Lote de Links (com Chunking e Progresso) ---
+  // --- Submissão: Lote de Links (com Chunking e Cancelamento) ---
   async function handleBatchImport(e: React.FormEvent) {
     e.preventDefault();
     const lines = batchText
@@ -195,11 +202,12 @@ export function ImportMovieWebModal({
     if (lines.length === 0) {
       setFeedback({
         type: "error",
-        message: "Nenhuma URL válida encontrada. Cole uma URL por linha iniciando com http:// ou https:// (ex: https://... | Nome do Filme)",
+        message: "Nenhuma URL válida encontrada. Cole uma URL por linha iniciando com http:// ou https://",
       });
       return;
     }
 
+    abortRef.current = false;
     setIsSubmittingBatch(true);
     setFeedback(null);
     setProgress({ current: 0, total: lines.length, percent: 0 });
@@ -217,6 +225,14 @@ export function ImportMovieWebModal({
 
     try {
       for (let i = 0; i < allItems.length; i += CHUNK_SIZE) {
+        if (abortRef.current) {
+          setFeedback({
+            type: "error",
+            message: `🛑 Importação interrompida! ${addedCount} itens foram adicionados antes de cancelar.`,
+          });
+          break;
+        }
+
         const chunk = allItems.slice(i, i + CHUNK_SIZE);
         const res = await api.batchImportMovies(
           {
@@ -236,11 +252,13 @@ export function ImportMovieWebModal({
         });
       }
 
-      setFeedback({
-        type: "success",
-        message: `Importação em lote concluída! ${addedCount} itens adicionados com sucesso (${errorCount} erros).`,
-      });
-      setBatchText("");
+      if (!abortRef.current) {
+        setFeedback({
+          type: "success",
+          message: `Importação em lote concluída! ${addedCount} itens adicionados (${errorCount} erros).`,
+        });
+        setBatchText("");
+      }
       onSuccess();
     } catch (err: any) {
       setFeedback({ type: "error", message: err.message || "Erro durante a importação em lote." });
@@ -276,7 +294,6 @@ export function ImportMovieWebModal({
       );
 
       setParsedM3u(res);
-      // Marca todas as categorias como selecionadas por padrão
       const initCats: Record<string, boolean> = {};
       res.categories.forEach((c) => {
         initCats[c.category] = true;
@@ -289,14 +306,12 @@ export function ImportMovieWebModal({
     }
   }
 
-  // --- M3U Import (com Chunking e Progresso em tempo real) ---
+  // --- M3U Import (com Chunking, Progresso e Cancelamento) ---
   async function handleImportM3uSelected() {
     if (!parsedM3u) return;
 
-    // Filtra itens com base nas categorias selecionadas
     let selectedItems = parsedM3u.items.filter((it) => selectedCats[it.category]);
 
-    // Aplica filtro de tipo (se aplicável)
     if (m3uFilter === "movies") {
       selectedItems = selectedItems.filter((it) => !it.is_series);
     } else if (m3uFilter === "series") {
@@ -308,6 +323,7 @@ export function ImportMovieWebModal({
       return;
     }
 
+    abortRef.current = false;
     setIsImportingM3u(true);
     setFeedback(null);
     setProgress({ current: 0, total: selectedItems.length, percent: 0 });
@@ -330,6 +346,14 @@ export function ImportMovieWebModal({
 
     try {
       for (let i = 0; i < itemsToImport.length; i += CHUNK_SIZE) {
+        if (abortRef.current) {
+          setFeedback({
+            type: "error",
+            message: `🛑 Importação interrompida! ${addedCount} itens foram adicionados antes de você cancelar.`,
+          });
+          break;
+        }
+
         const chunk = itemsToImport.slice(i, i + CHUNK_SIZE);
         const res = await api.batchImportMovies(
           {
@@ -349,13 +373,15 @@ export function ImportMovieWebModal({
         });
       }
 
-      setFeedback({
-        type: "success",
-        message: `Lista importada com sucesso! ${addedCount} itens cadastrados (${errorCount} erros).`,
-      });
-      setParsedM3u(null);
-      setM3uUrl("");
-      setM3uFile(null);
+      if (!abortRef.current) {
+        setFeedback({
+          type: "success",
+          message: `Lista importada com sucesso! ${addedCount} itens cadastrados (${errorCount} erros).`,
+        });
+        setParsedM3u(null);
+        setM3uUrl("");
+        setM3uFile(null);
+      }
       onSuccess();
     } catch (err: any) {
       setFeedback({ type: "error", message: err.message || "Erro ao importar filmes da lista M3U." });
@@ -365,15 +391,15 @@ export function ImportMovieWebModal({
     }
   }
 
-  // --- Deletar Fonte ---
+  // --- Deletar Fonte Específica ---
   async function handleDeleteSource(sourceName: string) {
-    if (!confirm(`Tem certeza que deseja apagar TODOS os filmes da fonte "${sourceName}"? Esta ação não pode ser desfeita.`)) {
+    if (!confirm(`Tem certeza que deseja apagar TODOS os filmes e séries da fonte "${sourceName}"? Esta ação não pode ser desfeita.`)) {
       return;
     }
     setDeletingSource(sourceName);
     try {
       const res = await api.deleteMoviesBySource(sourceName, token);
-      setFeedback({ type: "success", message: `${res.deleted} filmes da fonte "${sourceName}" foram excluídos com sucesso!` });
+      setFeedback({ type: "success", message: `${res.deleted} itens da fonte "${sourceName}" foram excluídos com sucesso!` });
       loadSources();
       onSuccess();
     } catch (err: any) {
@@ -383,9 +409,26 @@ export function ImportMovieWebModal({
     }
   }
 
+  // --- Limpar Todos os Filmes Externos ---
+  async function handleClearAllExternal() {
+    if (!confirm("⚠️ ATENÇÃO: Deseja apagar TODOS os filmes e séries importados da Web? Seus filmes salvos em arquivos locais não serão afetados.")) {
+      return;
+    }
+    setIsClearingAll(true);
+    try {
+      const res = await api.clearAllExternalMovies(token);
+      setFeedback({ type: "success", message: `Catálogo limpo com sucesso! ${res.deleted} itens externos foram removidos.` });
+      loadSources();
+      onSuccess();
+    } catch (err: any) {
+      setFeedback({ type: "error", message: err.message || "Erro ao limpar catálogo externo." });
+    } finally {
+      setIsClearingAll(false);
+    }
+  }
+
   if (!isOpen) return null;
 
-  // Itens filtrados para a prévia M3U
   const previewFilteredItems = parsedM3u
     ? parsedM3u.items
         .filter((it) => selectedCats[it.category])
@@ -413,7 +456,7 @@ export function ImportMovieWebModal({
             <div>
               <h2 className="text-lg font-bold text-ink">Adicionar Filmes e Séries da Web</h2>
               <p className="text-xs text-mute">
-                Importe links diretos (.mp4, .mkv, .m3u8), listas em lote ou listas completas M3U com separação inteligente de séries e filmes
+                Importe listas M3U ou links diretos com controle total e cancelamento a qualquer momento
               </p>
             </div>
           </div>
@@ -469,12 +512,24 @@ export function ImportMovieWebModal({
           </div>
         )}
 
-        {/* Barra de Progresso Global */}
+        {/* Barra de Progresso com Botão Cancelar */}
         {progress && (
-          <div className="mx-6 mt-4 p-4 rounded-xl border border-brand/40 bg-brand/10 space-y-2">
+          <div className="mx-6 mt-4 p-4 rounded-xl border border-brand/40 bg-brand/10 space-y-3">
             <div className="flex justify-between items-center text-xs font-semibold text-ink">
-              <span>🚀 Processando importação: {progress.current} de {progress.total} itens</span>
-              <span className="text-brand">{progress.percent}%</span>
+              <span className="flex items-center gap-2">
+                <span className="animate-spin text-base">⏳</span>
+                <span>Processando: {progress.current} de {progress.total} itens</span>
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-brand font-bold">{progress.percent}%</span>
+                <button
+                  type="button"
+                  onClick={handleCancelImport}
+                  className="rounded-md bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 text-xs font-bold transition flex items-center gap-1 shadow"
+                >
+                  🛑 Parar / Cancelar Agora
+                </button>
+              </div>
             </div>
             <div className="h-2 w-full bg-void rounded-full overflow-hidden border border-rule">
               <div
@@ -487,9 +542,7 @@ export function ImportMovieWebModal({
 
         {/* Conteúdo das Abas */}
         <div className="p-6 max-h-[75vh] overflow-y-auto">
-          {/* ============================================================
-              ABA 1: LISTA M3U / VOD (FILMES E SÉRIES)
-              ============================================================ */}
+          {/* TAB 1: LISTA M3U / VOD */}
           {activeTab === "m3u" && (
             <div className="space-y-6">
               {!parsedM3u ? (
@@ -506,7 +559,7 @@ export function ImportMovieWebModal({
                       className="input font-mono text-xs w-full"
                     />
                     <p className="text-[11px] text-mute mt-1">
-                      Aceita listas M3U de VOD, canais, séries ou links diretos da internet.
+                      Aceita listas M3U de filmes, séries ou canais VOD.
                     </p>
                   </div>
 
@@ -541,14 +594,14 @@ export function ImportMovieWebModal({
                         className="input text-xs w-full"
                       />
                       <p className="text-[11px] text-mute mt-1">
-                        Usado para filtrar ou apagar esta lista inteira depois com 1 clique.
+                        Facilita filtrar ou apagar esta lista inteira depois com 1 clique.
                       </p>
                     </div>
 
                     <div className="rounded-xl border border-rule bg-panel2 p-3 flex flex-col justify-center">
-                      <span className="text-xs font-semibold text-ink mb-1">💡 Dica de Desempenho</span>
+                      <span className="text-xs font-semibold text-ink mb-1">💡 Controle Total</span>
                       <p className="text-[11px] text-mute leading-relaxed">
-                        O sistema analisa as categorias e títulos antes de salvar. Você escolhe quais categorias importar e o sistema separa automaticamente séries de filmes!
+                        Ao analisar a lista, você escolhe apenas as categorias que quer e pode cancelar a importação a qualquer momento.
                       </p>
                     </div>
                   </div>
@@ -604,7 +657,7 @@ export function ImportMovieWebModal({
                     </div>
                   </div>
 
-                  {/* Configurações de Importação (Modo Rápido vs TMDB) */}
+                  {/* Configurações de Importação */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 rounded-xl border border-rule bg-void/50 p-4">
                     <div>
                       <label className="block text-xs font-semibold text-ink mb-1">
@@ -633,7 +686,7 @@ export function ImportMovieWebModal({
                           }`}
                         >
                           <div className="font-bold">⚡ Modo Rápido (Recomendado)</div>
-                          <div className="text-[10px] opacity-80">Importa instantaneamente com títulos e capas da lista</div>
+                          <div className="text-[10px] opacity-80">Importa instantaneamente sem travar</div>
                         </button>
 
                         <button
@@ -646,7 +699,7 @@ export function ImportMovieWebModal({
                           }`}
                         >
                           <div className="font-bold">✨ TMDB Concorrente</div>
-                          <div className="text-[10px] opacity-80">Busca sinopses, posters HD e trailers em paralelo</div>
+                          <div className="text-[10px] opacity-80">Busca sinopses e trailers em paralelo</div>
                         </button>
                       </div>
                     </div>
@@ -712,16 +765,13 @@ export function ImportMovieWebModal({
                     </div>
                   </div>
 
-                  {/* Prévia dos Itens Filtrados com Separação Séries / Filmes */}
+                  {/* Prévia dos Itens Filtrados */}
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs font-bold text-ink uppercase tracking-wider">
-                          Prévia dos Itens Selecionados ({previewFilteredItems.length})
-                        </label>
-                      </div>
+                      <label className="text-xs font-bold text-ink uppercase tracking-wider">
+                        Prévia dos Itens Selecionados ({previewFilteredItems.length})
+                      </label>
 
-                      {/* Filtros de Tipo */}
                       <div className="flex items-center gap-1.5 text-xs">
                         <button
                           type="button"
@@ -743,7 +793,7 @@ export function ImportMovieWebModal({
                               : "bg-panel2 text-mute hover:text-ink border border-rule"
                           }`}
                         >
-                          🎬 Apenas Filmes
+                          🎬 Filmes
                         </button>
                         <button
                           type="button"
@@ -754,12 +804,11 @@ export function ImportMovieWebModal({
                               : "bg-panel2 text-mute hover:text-ink border border-rule"
                           }`}
                         >
-                          📺 Apenas Séries
+                          📺 Séries
                         </button>
                       </div>
                     </div>
 
-                    {/* Busca Rápida na Prévia */}
                     <input
                       type="text"
                       placeholder="Filtrar prévia por nome ou categoria..."
@@ -771,7 +820,7 @@ export function ImportMovieWebModal({
                     <div className="max-h-52 overflow-y-auto space-y-1.5 rounded-xl border border-rule bg-void/40 p-2 font-mono text-xs">
                       {previewFilteredItems.length === 0 ? (
                         <p className="text-center text-mute py-4 text-xs">
-                          Nenhum item selecionado ou encontrado com os filtros atuais.
+                          Nenhum item selecionado ou encontrado.
                         </p>
                       ) : (
                         previewFilteredItems.slice(0, 100).map((it, idx) => (
@@ -803,38 +852,39 @@ export function ImportMovieWebModal({
                       )}
                       {previewFilteredItems.length > 100 && (
                         <p className="text-center text-[11px] text-mute py-2 font-sans">
-                          ... e mais {previewFilteredItems.length - 100} itens selecionados para importar.
+                          ... e mais {previewFilteredItems.length - 100} itens selecionados.
                         </p>
                       )}
                     </div>
                   </div>
 
-                  {/* Botão de Importação Final */}
-                  <button
-                    type="button"
-                    disabled={isImportingM3u || previewFilteredItems.length === 0}
-                    onClick={handleImportM3uSelected}
-                    className="w-full rounded-xl bg-brand py-3.5 font-bold text-ink transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand/20"
-                  >
+                  {/* Botões de Ação */}
+                  <div className="flex gap-3">
                     {isImportingM3u ? (
-                      <>
-                        <span className="animate-spin text-lg">⏳</span>
-                        <span>Importando {previewFilteredItems.length} itens...</span>
-                      </>
+                      <button
+                        type="button"
+                        onClick={handleCancelImport}
+                        className="w-full rounded-xl bg-red-600 hover:bg-red-700 py-3.5 font-bold text-white transition flex items-center justify-center gap-2 shadow-lg shadow-red-900/30"
+                      >
+                        <span>🛑 Parar / Cancelar Importação Imediatamente</span>
+                      </button>
                     ) : (
-                      <>
+                      <button
+                        type="button"
+                        disabled={previewFilteredItems.length === 0}
+                        onClick={handleImportM3uSelected}
+                        className="w-full rounded-xl bg-brand py-3.5 font-bold text-ink transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand/20"
+                      >
                         <span>📥 Importar {previewFilteredItems.length} Itens Selecionados</span>
-                      </>
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* ============================================================
-              ABA 2: LINK ÚNICO (FILME OU EPISÓDIO)
-              ============================================================ */}
+          {/* TAB 2: LINK ÚNICO */}
           {activeTab === "single" && (
             <form onSubmit={handleAddSingleMovie} className="space-y-4">
               <div>
@@ -849,12 +899,8 @@ export function ImportMovieWebModal({
                   onChange={(e) => handleUrlChange(e.target.value)}
                   className="input font-mono text-xs w-full"
                 />
-                <p className="text-[11px] text-mute mt-1">
-                  Formatos suportados: .mp4, .mkv, .m3u8 (HLS), .webm, .mov, etc.
-                </p>
               </div>
 
-              {/* Tipo de Mídia: Filme vs Série */}
               <div className="rounded-xl border border-rule bg-panel2 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-ink">Tipo de Conteúdo:</span>
@@ -944,7 +990,6 @@ export function ImportMovieWebModal({
                 </div>
               </div>
 
-              {/* Resultados da busca TMDB */}
               {tmdbResults.length > 0 && (
                 <div className="rounded-xl border border-rule bg-panel2 p-3 space-y-2">
                   <span className="text-xs font-semibold text-ink">Resultados do TMDB:</span>
@@ -1013,9 +1058,7 @@ export function ImportMovieWebModal({
             </form>
           )}
 
-          {/* ============================================================
-              ABA 3: LOTE DE LINKS EM TEXTO
-              ============================================================ */}
+          {/* TAB 3: LOTE DE LINKS EM TEXTO */}
           {activeTab === "batch" && (
             <form onSubmit={handleBatchImport} className="space-y-4">
               <div>
@@ -1029,9 +1072,6 @@ export function ImportMovieWebModal({
                   onChange={(e) => setBatchText(e.target.value)}
                   className="input font-mono text-xs w-full resize-y"
                 />
-                <p className="text-[11px] text-mute mt-1">
-                  Dica: Você pode colocar <code className="text-brand">URL | Nome do Filme ou Série</code> para definir o título explicitamente.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1057,48 +1097,62 @@ export function ImportMovieWebModal({
                     className="accent-brand rounded"
                   />
                   <label htmlFor="batchTmdb" className="text-xs text-ink cursor-pointer select-none">
-                    Buscar dados no TMDB (sinopse, capas e elenco)
+                    Buscar dados no TMDB (sinopse e capas)
                   </label>
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={isSubmittingBatch || !batchText.trim()}
-                className="w-full rounded-xl bg-brand py-3 font-semibold text-ink transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
+              <div className="flex gap-3">
                 {isSubmittingBatch ? (
-                  <>
-                    <span className="animate-spin">⏳</span>
-                    <span>Importando Lote...</span>
-                  </>
+                  <button
+                    type="button"
+                    onClick={handleCancelImport}
+                    className="w-full rounded-xl bg-red-600 hover:bg-red-700 py-3 font-bold text-white transition flex items-center justify-center gap-2 shadow"
+                  >
+                    <span>🛑 Parar / Cancelar Importação</span>
+                  </button>
                 ) : (
-                  <span>🚀 Iniciar Importação em Lote</span>
+                  <button
+                    type="submit"
+                    disabled={!batchText.trim()}
+                    className="w-full rounded-xl bg-brand py-3 font-semibold text-ink transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <span>🚀 Iniciar Importação em Lote</span>
+                  </button>
                 )}
-              </button>
+              </div>
             </form>
           )}
 
-          {/* ============================================================
-              ABA 4: GERENCIAR FONTES (EXCLUIR LISTAS)
-              ============================================================ */}
+          {/* TAB 4: GERENCIAR FONTES & LIMPEZA GERAL */}
           {activeTab === "sources" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-panel2 p-4 rounded-xl border border-rule">
                 <div>
-                  <h3 className="text-sm font-bold text-ink">Fontes Cadastradas no Catálogo</h3>
+                  <h3 className="text-sm font-bold text-ink">Gerenciador de Listas e Fontes</h3>
                   <p className="text-xs text-mute">
-                    Veja quantas mídias cada lista adicionou e apague lotes inteiros indesejados com 1 clique.
+                    Apague listas inteiras que foram adicionadas ou limpe todo o catálogo externo com 1 clique.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={loadSources}
-                  disabled={isLoadingSources}
-                  className="rounded-lg border border-rule px-3 py-1.5 text-xs text-mute hover:text-ink hover:bg-white/5"
-                >
-                  🔄 Atualizar
-                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={loadSources}
+                    disabled={isLoadingSources}
+                    className="rounded-lg border border-rule px-3 py-1.5 text-xs text-mute hover:text-ink hover:bg-white/5"
+                  >
+                    🔄 Atualizar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isClearingAll || sources.filter(s => s.is_external).length === 0}
+                    onClick={handleClearAllExternal}
+                    className="rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-900/60 hover:text-red-200 transition disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {isClearingAll ? "Limpando..." : "🧹 Limpar Todos os Filmes Externos"}
+                  </button>
+                </div>
               </div>
 
               {isLoadingSources ? (
@@ -1126,14 +1180,16 @@ export function ImportMovieWebModal({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={deletingSource === src.name}
-                        onClick={() => handleDeleteSource(src.name)}
-                        className="rounded-lg border border-red-800/40 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-900/50 hover:text-red-200 transition disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        {deletingSource === src.name ? "Excluindo..." : "🗑️ Apagar Lista"}
-                      </button>
+                      {src.is_external && (
+                        <button
+                          type="button"
+                          disabled={deletingSource === src.name}
+                          onClick={() => handleDeleteSource(src.name)}
+                          className="rounded-lg border border-red-800/40 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-900/50 hover:text-red-200 transition disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {deletingSource === src.name ? "Excluindo..." : "🗑️ Apagar Esta Lista"}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
