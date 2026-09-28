@@ -138,6 +138,11 @@ class BatchMovieUrlItem(BaseModel):
     title: Optional[str] = None
     category: Optional[str] = None
     poster_url: Optional[str] = None
+    is_series: Optional[bool] = False
+    series_title: Optional[str] = None
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+    episode_title: Optional[str] = None
 
 
 class BatchMovieImportRequest(BaseModel):
@@ -159,6 +164,11 @@ class ParsedMovieItem(BaseModel):
     poster_url: Optional[str] = None
     clean_title: str
     year: Optional[int] = None
+    is_series: bool = False
+    series_title: Optional[str] = None
+    season_number: Optional[int] = None
+    episode_number: Optional[int] = None
+    episode_title: Optional[str] = None
 
 
 class CategoryWithCount(BaseModel):
@@ -168,6 +178,8 @@ class CategoryWithCount(BaseModel):
 
 class ParseMovieM3UResponse(BaseModel):
     total: int
+    total_movies: int = 0
+    total_episodes: int = 0
     categories: List[CategoryWithCount]
     items: List[ParsedMovieItem]
 

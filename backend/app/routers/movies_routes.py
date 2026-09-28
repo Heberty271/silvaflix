@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -45,41 +46,8 @@ def srt_to_vtt(srt_content: str) -> str:
     return "WEBVTT\n\n" + vtt_content
 
 
-def parse_series_info(filename: str) -> dict:
-    """Detecta se o arquivo e um episodio de serie (ex: S01E02 ou 1x05)."""
-    basename = os.path.splitext(os.path.basename(filename))[0]
-
-    match_s_e = re.search(r"\bS(\d{1,2})E(\d{1,3})\b", basename, re.IGNORECASE)
-    if match_s_e:
-        season = int(match_s_e.group(1))
-        episode = int(match_s_e.group(2))
-        series_name = basename[: match_s_e.start()]
-        series_clean = re.sub(r"[\._\-]", " ", series_name).strip()
-        return {
-            "is_series": True,
-            "series_title": series_clean or basename,
-            "season_number": season,
-            "episode_number": episode,
-        }
-
-    match_nxn = re.search(r"\b(\d{1,2})x(\d{1,3})\b", basename, re.IGNORECASE)
-    if match_nxn:
-        season = int(match_nxn.group(1))
-        episode = int(match_nxn.group(2))
-        series_name = basename[: match_nxn.start()]
-        series_clean = re.sub(r"[\._\-]", " ", series_name).strip()
-        return {
-            "is_series": True,
-            "series_title": series_clean or basename,
-            "season_number": season,
-            "episode_number": episode,
-        }
-
-    return {"is_series": False}
-
-
 def clean_filename_for_search(filename: str) -> tuple[str, Optional[int]]:
-    """Extrai título limpo e ano de um arquivo de vídeo para consulta no TMDB."""
+    """Extrai título limpo e ano de um arquivo de vídeo ou título de lista para consulta no TMDB."""
     basename = os.path.splitext(os.path.basename(filename))[0]
 
     year_match = re.search(r"\b(19\d\d|20\d\d)\b", basename)
@@ -94,7 +62,8 @@ def clean_filename_for_search(filename: str) -> tuple[str, Optional[int]]:
         r"1080p", r"720p", r"480p", r"2160p", r"4k", r"bluray", r"bdrip", r"dvdrip",
         r"web-dl", r"webrip", r"h\.?264", r"x\.?264", r"h\.?265", r"x\.?265", r"hevc",
         r"dual", r"dublado", r"legendado", r"aac", r"ac3", r"dts", r"yify", r"yts",
-        r"rarbg", r"imax", r"s\d{1,2}e\d{1,3}", r"\d{1,2}x\d{1,3}"
+        r"rarbg", r"imax", r"fhd", r"hd", r"sd", r"uhd", r"x264", r"x265",
+        r"s\d{1,2}[\s\.\-_]*e\d{1,3}", r"\d{1,2}x\d{1,3}", r"t\d{1,2}[\s\.\-_]*e\d{1,3}"
     ]
     for tag in tags:
         title_part = re.sub(tag, "", title_part, flags=re.IGNORECASE)
@@ -102,6 +71,144 @@ def clean_filename_for_search(filename: str) -> tuple[str, Optional[int]]:
     title_clean = re.sub(r"[\._\-]", " ", title_part)
     title_clean = re.sub(r"\s+", " ", title_clean).strip()
     return title_clean or basename, year
+
+
+def parse_media_and_series_info(title: str, category: str = "", url: str = "") -> dict:
+    """
+    Analisa o título, categoria e URL para detectar se é série ou filme,
+    extraindo o nome limpo da série, temporada, episódio e título do episódio.
+    """
+    clean_title, year = clean_filename_for_search(title)
+
+    cat_lower = (category or "").lower()
+    url_lower = (url or "").lower()
+    is_series_group = any(k in cat_lower for k in [
+        "serie", "série", "novela", "dorama", "anime", "animacao", "desenho", "temporada", "season", "kids"
+    ]) or ("/series/" in url_lower or "/tv/" in url_lower)
+
+    # 1. Padrão: S01E02, S1 E2, S01.E02, S01 - E02, S01 - EP02, s01e02
+    match_s_e = re.search(r"\bS(\d{1,2})[\s\.\-_]*(?:E|EP)(\d{1,3})\b", title, re.IGNORECASE)
+    if match_s_e:
+        season = int(match_s_e.group(1))
+        episode = int(match_s_e.group(2))
+        series_raw = title[: match_s_e.start()].strip(" -._")
+        series_clean, _ = clean_filename_for_search(series_raw)
+        ep_title_raw = title[match_s_e.end():].strip(" -._")
+        ep_title, _ = clean_filename_for_search(ep_title_raw) if ep_title_raw else (None, None)
+        return {
+            "is_series": True,
+            "series_title": series_clean.title() or series_raw.title() or clean_title.title(),
+            "season_number": season,
+            "episode_number": episode,
+            "episode_title": ep_title or f"Episódio {episode}",
+            "clean_search_title": series_clean or clean_title,
+            "year": year,
+        }
+
+    # 2. Padrão: 1x05, 01x02, 2X10
+    match_nxn = re.search(r"\b(\d{1,2})x(\d{1,3})\b", title, re.IGNORECASE)
+    if match_nxn:
+        season = int(match_nxn.group(1))
+        episode = int(match_nxn.group(2))
+        series_raw = title[: match_nxn.start()].strip(" -._")
+        series_clean, _ = clean_filename_for_search(series_raw)
+        ep_title_raw = title[match_nxn.end():].strip(" -._")
+        ep_title, _ = clean_filename_for_search(ep_title_raw) if ep_title_raw else (None, None)
+        return {
+            "is_series": True,
+            "series_title": series_clean.title() or series_raw.title() or clean_title.title(),
+            "season_number": season,
+            "episode_number": episode,
+            "episode_title": ep_title or f"Episódio {episode}",
+            "clean_search_title": series_clean or clean_title,
+            "year": year,
+        }
+
+    # 3. Padrão: T01 E02, T1EP05, T1 - E2
+    match_t_e = re.search(r"\bT(\d{1,2})[\s\.\-_]*(?:E|EP)(\d{1,3})\b", title, re.IGNORECASE)
+    if match_t_e:
+        season = int(match_t_e.group(1))
+        episode = int(match_t_e.group(2))
+        series_raw = title[: match_t_e.start()].strip(" -._")
+        series_clean, _ = clean_filename_for_search(series_raw)
+        ep_title_raw = title[match_t_e.end():].strip(" -._")
+        ep_title, _ = clean_filename_for_search(ep_title_raw) if ep_title_raw else (None, None)
+        return {
+            "is_series": True,
+            "series_title": series_clean.title() or series_raw.title() or clean_title.title(),
+            "season_number": season,
+            "episode_number": episode,
+            "episode_title": ep_title or f"Episódio {episode}",
+            "clean_search_title": series_clean or clean_title,
+            "year": year,
+        }
+
+    # 4. Padrão: Temporada 1 Episódio 2 / Temp 1 Ep 02
+    match_temp_ep = re.search(r"\b(?:Temporada|Temp|Season)[\s\.\-_]*(\d{1,2})[\s\.\-_]*(?:Episodio|Episódio|Ep|Capitulo|Cap)[\s\.\-_]*(\d{1,3})\b", title, re.IGNORECASE)
+    if match_temp_ep:
+        season = int(match_temp_ep.group(1))
+        episode = int(match_temp_ep.group(2))
+        series_raw = title[: match_temp_ep.start()].strip(" -._")
+        series_clean, _ = clean_filename_for_search(series_raw)
+        ep_title_raw = title[match_temp_ep.end():].strip(" -._")
+        ep_title, _ = clean_filename_for_search(ep_title_raw) if ep_title_raw else (None, None)
+        return {
+            "is_series": True,
+            "series_title": series_clean.title() or series_raw.title() or clean_title.title(),
+            "season_number": season,
+            "episode_number": episode,
+            "episode_title": ep_title or f"Episódio {episode}",
+            "clean_search_title": series_clean or clean_title,
+            "year": year,
+        }
+
+    # 5. Padrão: Episódio 01 / EP 05 / Cap 12 (se o grupo ou URL indica série)
+    match_ep_only = re.search(r"\b(?:Episodio|Episódio|Capitulo|Cap|EP)[\s\.\-_]*(\d{1,3})\b", title, re.IGNORECASE)
+    if match_ep_only and is_series_group:
+        episode = int(match_ep_only.group(1))
+        season = 1
+        match_group_season = re.search(r"\b(?:T|Temporada|Temp|Season)[\s\.\-_]*(\d{1,2})\b", category, re.IGNORECASE)
+        if match_group_season:
+            season = int(match_group_season.group(1))
+        series_raw = title[: match_ep_only.start()].strip(" -._")
+        series_clean, _ = clean_filename_for_search(series_raw)
+        return {
+            "is_series": True,
+            "series_title": series_clean.title() or series_raw.title() or clean_title.title(),
+            "season_number": season,
+            "episode_number": episode,
+            "episode_title": f"Episódio {episode}",
+            "clean_search_title": series_clean or clean_title,
+            "year": year,
+        }
+
+    # 6. Se o grupo é explicitamente de séries mas não tem número de episódio no título
+    if is_series_group and ("/series/" in url_lower or "serie" in cat_lower):
+        return {
+            "is_series": True,
+            "series_title": clean_title.title() or title,
+            "season_number": 1,
+            "episode_number": 1,
+            "episode_title": clean_title.title() or title,
+            "clean_search_title": clean_title,
+            "year": year,
+        }
+
+    # Padrão: É um filme
+    return {
+        "is_series": False,
+        "series_title": None,
+        "season_number": None,
+        "episode_number": None,
+        "episode_title": None,
+        "clean_search_title": clean_title,
+        "year": year,
+    }
+
+
+def parse_series_info(filename: str) -> dict:
+    """Compatibilidade legada: detecta informações de série usando parse_media_and_series_info."""
+    return parse_media_and_series_info(filename)
 
 
 @router.get("/movies", response_model=list[schemas.MovieOut])
@@ -921,7 +1028,7 @@ async def create_movie_from_url(
 
 @admin_router.post("/movies/parse-m3u", response_model=schemas.ParseMovieM3UResponse)
 async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
-    """Analisa uma lista M3U (URL ou arquivo) e extrai os títulos de filmes/VOD, categorias e links."""
+    """Analisa uma lista M3U (URL ou arquivo) e extrai os títulos de filmes/séries/VOD, categorias e links com detecção inteligente de episódios."""
     content = payload.content
     if payload.url and not content:
         url = payload.url.strip()
@@ -942,6 +1049,8 @@ async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
     items: list[schemas.ParsedMovieItem] = []
     category_counts: dict[str, int] = {}
     current_meta: dict = {}
+    total_movies = 0
+    total_episodes = 0
 
     for line in lines:
         line_str = line.strip()
@@ -952,22 +1061,27 @@ async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
             logo_match = re.search(r'tvg-logo="([^"]*)"', line_str, re.IGNORECASE)
             name_match = re.search(r',([^,]+)$', line_str)
 
-            raw_cat = group_match.group(1).strip() if group_match else "Filmes"
+            raw_cat = group_match.group(1).strip() if group_match else "Geral"
             logo = logo_match.group(1).strip() if logo_match else None
-            name = name_match.group(1).strip() if name_match else "Filme"
+            name = name_match.group(1).strip() if name_match else "Item"
 
             current_meta = {
                 "name": name,
-                "category": raw_cat or "Filmes",
+                "category": raw_cat or "Geral",
                 "logo": logo,
             }
         elif not line_str.startswith("#") and current_meta:
             video_url = line_str
-            raw_title = current_meta.get("name", "Filme")
-            category = current_meta.get("category", "Filmes")
+            raw_title = current_meta.get("name", "Item")
+            category = current_meta.get("category", "Geral")
             logo = current_meta.get("logo")
 
-            clean_name, year = clean_filename_for_search(raw_title)
+            info = parse_media_and_series_info(raw_title, category, video_url)
+            is_series = bool(info.get("is_series", False))
+            if is_series:
+                total_episodes += 1
+            else:
+                total_movies += 1
 
             category_counts[category] = category_counts.get(category, 0) + 1
             items.append(schemas.ParsedMovieItem(
@@ -975,8 +1089,13 @@ async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
                 video_url=video_url,
                 category=category,
                 poster_url=logo,
-                clean_title=clean_name,
-                year=year,
+                clean_title=info.get("clean_search_title") or raw_title,
+                year=info.get("year"),
+                is_series=is_series,
+                series_title=info.get("series_title"),
+                season_number=info.get("season_number"),
+                episode_number=info.get("episode_number"),
+                episode_title=info.get("episode_title"),
             ))
             current_meta = {}
 
@@ -987,6 +1106,8 @@ async def parse_movie_m3u(payload: schemas.ParseMovieM3URequest):
 
     return schemas.ParseMovieM3UResponse(
         total=len(items),
+        total_movies=total_movies,
+        total_episodes=total_episodes,
         categories=sorted_cats,
         items=items,
     )
@@ -997,7 +1118,7 @@ async def batch_import_movies(
     payload: schemas.BatchMovieImportRequest,
     db: Session = Depends(get_db),
 ):
-    """Importa uma lista de filmes em massa da internet com busca inteligente opcional no TMDB."""
+    """Importa uma lista de filmes e episódios de séries em massa da internet com busca concorrente ultra-rápida no TMDB."""
     items = payload.items
     if not items:
         raise HTTPException(status_code=400, detail="Nenhum item fornecido para importação")
@@ -1006,16 +1127,29 @@ async def batch_import_movies(
     errors = 0
     results = []
 
-    for item in items:
+    tmdb_cache: dict[str, dict] = {}
+    sem = asyncio.Semaphore(15)
+
+    async def process_item(item: schemas.BatchMovieUrlItem):
         video_url = item.video_url.strip()
         if not video_url:
-            continue
+            return None
 
         raw_title = item.title or os.path.basename(video_url.split("?")[0])
-        clean_name, year = clean_filename_for_search(raw_title)
+        category = item.category or "Geral"
+
+        info = parse_media_and_series_info(raw_title, category, video_url)
+        is_series = bool(item.is_series or info.get("is_series", False))
+        series_title = item.series_title or info.get("series_title")
+        season_number = item.season_number if item.season_number is not None else info.get("season_number")
+        episode_number = item.episode_number if item.episode_number is not None else info.get("episode_number")
+        episode_title = item.episode_title or info.get("episode_title")
+
+        clean_name = info.get("clean_search_title") or raw_title
+        year = info.get("year")
 
         synopsis = ""
-        genre = item.category or "Geral"
+        genre = category
         director = None
         cast = None
         duration_minutes = None
@@ -1025,71 +1159,108 @@ async def batch_import_movies(
         trailer_id = None
         movie_title = clean_name.title() or raw_title
 
+        if is_series and series_title:
+            s_num = f"T{season_number:02d}" if season_number is not None else "T01"
+            e_num = f"E{episode_number:02d}" if episode_number is not None else "E01"
+            movie_title = f"{series_title} - {s_num}{e_num}"
+            if episode_title and episode_title != f"Episódio {episode_number}":
+                movie_title += f" - {episode_title}"
+
         if payload.fetch_tmdb and TMDB_API_KEY:
-            try:
-                candidates = await tmdb.search_movies(clean_name)
-                if candidates:
-                    chosen = candidates[0]
-                    if year:
-                        for c in candidates:
-                            if c.year and str(year) in c.year:
-                                chosen = c
-                                break
-                    details = await tmdb.get_movie_details(chosen.tmdb_id)
+            cache_key = f"{'tv' if is_series else 'movie'}:{(series_title or clean_name).lower()}:{year or ''}"
+            details = tmdb_cache.get(cache_key)
+
+            if details is None:
+                async with sem:
+                    try:
+                        if is_series:
+                            query_search = series_title or clean_name
+                            candidates = await asyncio.wait_for(tmdb.search_tv(query_search), timeout=3.5)
+                            if candidates:
+                                chosen = candidates[0]
+                                details = await asyncio.wait_for(tmdb.get_tv_details(chosen.tmdb_id), timeout=3.5)
+                        else:
+                            candidates = await asyncio.wait_for(tmdb.search_movies(clean_name), timeout=3.5)
+                            if candidates:
+                                chosen = candidates[0]
+                                if year:
+                                    for c in candidates:
+                                        if c.year and str(year) in str(c.year):
+                                            chosen = c
+                                            break
+                                details = await asyncio.wait_for(tmdb.get_movie_details(chosen.tmdb_id), timeout=3.5)
+
+                        if details:
+                            tmdb_cache[cache_key] = details
+                    except Exception:
+                        pass
+
+            if details:
+                synopsis = details.get("synopsis") or ""
+                year = details.get("year") or year
+                genre = details.get("genre") or genre
+                director = details.get("director")
+                cast = details.get("cast")
+                duration_minutes = details.get("duration_minutes")
+                poster_url = details.get("poster_url") or poster_url
+                backdrop_url = details.get("backdrop_url")
+                collection_name = details.get("collection_name")
+                trailer_id = details.get("trailer_youtube_id")
+                if not is_series:
                     movie_title = details.get("title") or movie_title
-                    synopsis = details.get("synopsis") or ""
-                    year = details.get("year") or year
-                    genre = details.get("genre") or genre
-                    director = details.get("director")
-                    cast = details.get("cast")
-                    duration_minutes = details.get("duration_minutes")
-                    poster_url = details.get("poster_url") or poster_url
-                    backdrop_url = details.get("backdrop_url")
-                    collection_name = details.get("collection_name")
-                    trailer_id = details.get("trailer_youtube_id")
-            except Exception:
-                pass
 
+        return {
+            "title": movie_title,
+            "synopsis": synopsis,
+            "year": year,
+            "genre": genre,
+            "duration_minutes": duration_minutes,
+            "director": director,
+            "cast": cast,
+            "filename": video_url,
+            "video_url": video_url,
+            "is_external": True,
+            "source_name": payload.source_name or "Importação Web",
+            "is_private": payload.is_private,
+            "is_series": is_series,
+            "series_title": series_title if is_series else None,
+            "season_number": season_number if is_series else None,
+            "episode_number": episode_number if is_series else None,
+            "episode_title": episode_title if is_series else None,
+            "collection_name": collection_name,
+            "trailer_youtube_id": trailer_id,
+            "thumbnail_filename": poster_url,
+            "backdrop_filename": backdrop_url,
+        }
+
+    # Processa itens concorrentemente
+    processed_items = await asyncio.gather(*[process_item(it) for it in items], return_exceptions=True)
+
+    db_movies = []
+    for res in processed_items:
+        if isinstance(res, Exception) or res is None:
+            errors += 1
+            continue
         try:
-            movie = models.Movie(
-                title=movie_title,
-                synopsis=synopsis,
-                year=year,
-                genre=genre,
-                duration_minutes=duration_minutes,
-                director=director,
-                cast=cast,
-                filename=video_url,
-                video_url=video_url,
-                is_external=True,
-                source_name=payload.source_name or "Importação Web",
-                is_private=payload.is_private,
-                collection_name=collection_name,
-                trailer_youtube_id=trailer_id,
-                thumbnail_filename=poster_url,
-                backdrop_filename=backdrop_url,
-            )
+            movie = models.Movie(**res)
             db.add(movie)
-            db.commit()
-            db.refresh(movie)
-
-            # Baixa poster localmente se possível
-            if poster_url and poster_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
-                try:
-                    img_data = await tmdb.download_poster(poster_url)
-                    thumb_name = f"movie_{movie.id}.jpg"
-                    with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
-                        f.write(img_data)
-                    movie.thumbnail_filename = thumb_name
-                    db.commit()
-                except Exception:
-                    pass
-
-            added += 1
-            results.append({"id": movie.id, "title": movie.title, "status": "added"})
+            db_movies.append(movie)
         except Exception as e:
             errors += 1
-            results.append({"url": video_url, "status": "error", "error": str(e)})
+            results.append({"status": "error", "error": str(e)})
+
+    db.commit()
+
+    for movie in db_movies:
+        db.refresh(movie)
+        added += 1
+        results.append({
+            "id": movie.id,
+            "title": movie.title,
+            "is_series": movie.is_series,
+            "series_title": movie.series_title,
+            "status": "added",
+        })
 
     return {
         "total": len(items),

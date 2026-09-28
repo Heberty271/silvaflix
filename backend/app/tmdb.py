@@ -164,9 +164,100 @@ async def find_trailer_for_movie(title: str, year: Optional[int] = None) -> Opti
         return None
 
 
+async def search_tv(query: str) -> list[TMDBSearchResult]:
+    """Busca séries/programas de TV por título no TMDB."""
+    _require_api_key()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{TMDB_API_BASE}/search/tv",
+                params={
+                    "api_key": TMDB_API_KEY,
+                    "query": query,
+                    "language": TMDB_LANGUAGE,
+                    "include_adult": "false",
+                },
+            )
+    except httpx.RequestError:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível conectar ao TMDB.",
+        )
+    if resp.status_code in (401, 403):
+        raise HTTPException(status_code=400, detail="Chave do TMDB inválida.")
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = []
+    for item in data.get("results", []):
+        first_air = item.get("first_air_date") or ""
+        year_match = re.match(r"(\d{4})", first_air)
+        results.append(
+            TMDBSearchResult(
+                tmdb_id=item["id"],
+                title=item.get("name") or item.get("original_name") or "",
+                year=year_match.group(1) if year_match else None,
+                poster_url=_poster_url(item.get("poster_path")),
+                overview=item.get("overview") or "",
+            )
+        )
+    return results
+
+
+async def get_tv_details(tmdb_id: int) -> dict:
+    """Busca detalhes de uma série de TV (sinopse, gêneros, capas, etc)."""
+    _require_api_key()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{TMDB_API_BASE}/tv/{tmdb_id}",
+                params={
+                    "api_key": TMDB_API_KEY,
+                    "language": TMDB_LANGUAGE,
+                    "append_to_response": "credits,videos",
+                },
+            )
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Erro de conexão com TMDB.")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Série não encontrada no TMDB")
+    resp.raise_for_status()
+    data = resp.json()
+
+    first_air = data.get("first_air_date") or ""
+    year_match = re.match(r"(\d{4})", first_air)
+    genres = [g["name"] for g in data.get("genres", [])]
+
+    videos = data.get("videos", {}).get("results", [])
+    trailer_key = None
+    for v in videos:
+        if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser"):
+            trailer_key = v.get("key")
+            break
+
+    credits = data.get("credits", {})
+    created_by = [c["name"] for c in data.get("created_by", [])]
+    cast_names = [c["name"] for c in credits.get("cast", [])[:5]]
+
+    return {
+        "title": data.get("name") or data.get("original_name") or "",
+        "synopsis": data.get("overview") or "",
+        "year": int(year_match.group(1)) if year_match else None,
+        "genre": ", ".join(genres) if genres else "Série",
+        "duration_minutes": data.get("episode_run_time", [None])[0] if data.get("episode_run_time") else None,
+        "director": ", ".join(created_by) if created_by else None,
+        "cast": ", ".join(cast_names) if cast_names else None,
+        "poster_url": _poster_url(data.get("poster_path")),
+        "backdrop_url": _backdrop_url(data.get("backdrop_path")),
+        "collection_name": None,
+        "trailer_youtube_id": trailer_key,
+    }
+
+
 async def download_poster(url: str) -> bytes:
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.content
+
 

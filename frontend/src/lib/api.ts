@@ -11,35 +11,12 @@ export async function syncApiUrl(force = false): Promise<string> {
     return cachedUrl;
   }
 
-  // 1. Se estiver acessando de localhost, verifica se o backend local está ativo na porta 8000
-  if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1200);
-      const localCheck = await fetch("http://localhost:8000/health", { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (localCheck.ok) {
-        cachedUrl = "http://localhost:8000";
-        localStorage.setItem(STORAGE_KEY, "http://localhost:8000");
-        lastSyncTime = now;
-        return "http://localhost:8000";
-      }
-    } catch {
-      // Local backend offline ou porta diferente, tenta túnel
-    }
-  }
-
-  // 2. Busca na ponte npoint.io (para túnel remoto / produção)
   if (typeof window !== "undefined") {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
       const res = await fetch(NPOINT_URL, {
         headers: { "bypass-tunnel-reminder": "true" },
         cache: "no-store",
-        signal: controller.signal,
       });
-      clearTimeout(timeoutId);
       if (res.ok) {
         const data = await res.json();
         if (data.url && typeof data.url === "string" && data.url.startsWith("http")) {
@@ -70,9 +47,6 @@ export async function syncApiUrl(force = false): Promise<string> {
 export function getApiUrl(): string {
   if (cachedUrl) return cachedUrl;
   if (typeof window !== "undefined") {
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return "http://localhost:8000";
-    }
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
       cachedUrl = local;
@@ -324,6 +298,11 @@ export interface BatchMovieUrlItem {
   title?: string;
   category?: string;
   poster_url?: string;
+  is_series?: boolean;
+  series_title?: string;
+  season_number?: number;
+  episode_number?: number;
+  episode_title?: string;
 }
 
 export interface BatchMovieImportRequest {
@@ -345,10 +324,17 @@ export interface ParsedMovieItem {
   poster_url?: string | null;
   clean_title: string;
   year?: number | null;
+  is_series?: boolean;
+  series_title?: string;
+  season_number?: number;
+  episode_number?: number;
+  episode_title?: string;
 }
 
 export interface ParseMovieM3UResponse {
   total: number;
+  total_movies?: number;
+  total_episodes?: number;
   categories: CategoryWithCount[];
   items: ParsedMovieItem[];
 }
