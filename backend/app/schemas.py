@@ -161,6 +161,11 @@ class ParsedMovieItem(BaseModel):
     year: Optional[int] = None
 
 
+class CategoryWithCount(BaseModel):
+    category: str
+    count: int
+
+
 class ParseMovieM3UResponse(BaseModel):
     total: int
     categories: List[CategoryWithCount]
@@ -285,11 +290,6 @@ class PaginatedChannels(BaseModel):
     page: int
     limit: int
     total_pages: int
-
-
-class CategoryWithCount(BaseModel):
-    category: str
-    count: int
 
 
 class M3UImportRequest(BaseModel):
