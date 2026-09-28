@@ -7,7 +7,7 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { api, User } from "./api";
+import { api, User, syncApiUrl } from "./api";
 
 interface AuthState {
   user: User | null;
@@ -27,21 +27,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (!stored) {
-      setLoading(false);
-      return;
-    }
-    api
-      .me(stored)
-      .then((u) => {
+    async function initAuth() {
+      try {
+        await syncApiUrl(true);
+      } catch {
+        // ignore
+      }
+
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        setLoading(false);
+        return;
+      }
+      try {
+        const u = await api.me(stored);
         setUser(u);
         setToken(stored);
-      })
-      .catch(() => {
+      } catch {
         window.localStorage.removeItem(STORAGE_KEY);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    initAuth();
   }, []);
 
   async function login(email: string, password: string) {
