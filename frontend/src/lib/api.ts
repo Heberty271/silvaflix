@@ -277,6 +277,77 @@ export interface AIImportStreamRequest {
   is_private?: boolean;
 }
 
+export interface TorrentStreamOption {
+  title: string;
+  info_hash: string;
+  magnet: string;
+  quality: string;
+  size_str?: string | null;
+  seeders: number;
+  provider: string;
+  is_dubbed: boolean;
+  language: string;
+  filename?: string | null;
+  debrid_stream_url?: string | null;
+}
+
+export interface TorrentSearchResponse {
+  query: string;
+  found: boolean;
+  metadata: AIMetadata;
+  torrents: TorrentStreamOption[];
+  total: number;
+  best_dubbed?: TorrentStreamOption | null;
+}
+
+export interface TorrentResolveResponse {
+  stream_url: string;
+  player_type: string;
+  title?: string | null;
+  quality?: string | null;
+}
+
+export interface DownloadStartRequest {
+  url: string;
+  tmdb_id?: number | null;
+  title?: string | null;
+  custom_filename?: string | null;
+  is_private?: boolean;
+}
+
+export interface DownloadTaskOut {
+  id: string;
+  url: string;
+  title: string;
+  filename: string;
+  status: "queued" | "downloading" | "finished" | "error" | "cancelled";
+  progress_percent: number;
+  speed_str?: string | null;
+  eta_str?: string | null;
+  downloaded_bytes?: number;
+  total_bytes?: number;
+  error_message?: string | null;
+  movie_id?: number | null;
+  created_at: string;
+}
+
+export interface SmartVODImportRequest {
+  items: BatchMovieUrlItem[];
+  source_name?: string;
+  auto_categorize_series?: boolean;
+  verify_live_streams?: boolean;
+  is_private?: boolean;
+}
+
+export interface SmartVODImportResponse {
+  total_submitted: number;
+  verified_working: number;
+  dead_discarded: number;
+  movies_added: number;
+  series_episodes_added: number;
+  results: Array<{ title: string; url: string; is_series: boolean; status: string }>;
+}
+
 export interface Channel {
   id: number;
   name: string;
@@ -351,7 +422,7 @@ export interface BatchMovieUrlItem {
   video_url: string;
   title?: string;
   category?: string;
-  poster_url?: string;
+  poster_url?: string | null;
   is_series?: boolean;
   series_title?: string;
   season_number?: number;
@@ -923,6 +994,46 @@ export const api = {
   aiImportStream: (payload: AIImportStreamRequest, token: string) =>
     request<Movie>(
       "/ai/import-stream",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  // --- Stremio / Torrents Engine ---
+  searchTorrents: (query: string, token: string, year?: number) => {
+    const qs = new URLSearchParams({ q: query });
+    if (year) qs.set("year", String(year));
+    return request<TorrentSearchResponse>(`/torrents/search?${qs.toString()}`, {}, token);
+  },
+
+  resolveTorrentStream: (magnet: string, token: string, debridToken?: string) =>
+    request<TorrentResolveResponse>(
+      "/torrents/resolve",
+      { method: "POST", body: JSON.stringify({ magnet, debrid_token: debridToken }) },
+      token
+    ),
+
+  // --- Gerenciador de Downloads (yt-dlp) ---
+  startDownload: (payload: DownloadStartRequest, token: string) =>
+    request<DownloadTaskOut>(
+      "/admin/downloads/start",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  listActiveDownloads: (token: string) =>
+    request<DownloadTaskOut[]>("/admin/downloads/active", {}, token),
+
+  cancelDownload: (taskId: string, token: string) =>
+    request<{ ok: boolean; message: string }>(
+      `/admin/downloads/cancel/${taskId}`,
+      { method: "POST" },
+      token
+    ),
+
+  // --- Importador VOD Inteligente ---
+  smartVodImport: (payload: SmartVODImportRequest, token: string) =>
+    request<SmartVODImportResponse>(
+      "/admin/movies/smart-vod-import",
       { method: "POST", body: JSON.stringify(payload) },
       token
     ),

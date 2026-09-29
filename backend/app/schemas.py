@@ -394,3 +394,86 @@ class AIImportStreamRequest(BaseModel):
     provider_name: str
     metadata: AIMetadata
     is_private: bool = False
+
+
+# --- Schemas para Torrents & Stream Sequencial (Stremio Engine) ---
+
+class TorrentStreamOption(BaseModel):
+    title: str
+    info_hash: str
+    magnet: str
+    quality: str = "1080p"
+    size_str: Optional[str] = None
+    seeders: int = 0
+    provider: str = "Torrents BR"
+    is_dubbed: bool = False
+    language: str = "Multi-Áudio"
+    filename: Optional[str] = None
+    debrid_stream_url: Optional[str] = None
+
+
+class TorrentSearchResponse(BaseModel):
+    query: str
+    found: bool
+    metadata: AIMetadata
+    torrents: List[TorrentStreamOption]
+    total: int
+    best_dubbed: Optional[TorrentStreamOption] = None
+
+
+class TorrentResolveRequest(BaseModel):
+    magnet: str
+    debrid_token: Optional[str] = None
+
+
+class TorrentResolveResponse(BaseModel):
+    stream_url: str
+    player_type: str = "direct"
+    title: Optional[str] = None
+    quality: Optional[str] = None
+
+
+# --- Schemas para Gerenciador de Downloads (yt-dlp) ---
+
+class DownloadStartRequest(BaseModel):
+    url: str
+    tmdb_id: Optional[int] = None
+    title: Optional[str] = None
+    custom_filename: Optional[str] = None
+    is_private: bool = False
+
+
+class DownloadTaskOut(BaseModel):
+    id: str
+    url: str
+    title: str
+    filename: str
+    status: str
+    progress_percent: float = 0.0
+    speed_str: Optional[str] = None
+    eta_str: Optional[str] = None
+    downloaded_bytes: Optional[int] = 0
+    total_bytes: Optional[int] = 0
+    error_message: Optional[str] = None
+    movie_id: Optional[int] = None
+    created_at: str
+
+
+# --- Schemas para Importador VOD Inteligente com Filtro de Mídia Viva ---
+
+class SmartVODImportRequest(BaseModel):
+    items: List[BatchMovieUrlItem]
+    source_name: Optional[str] = "Importação VOD Inteligente"
+    auto_categorize_series: bool = True
+    verify_live_streams: bool = True
+    is_private: bool = False
+
+
+class SmartVODImportResponse(BaseModel):
+    total_submitted: int
+    verified_working: int
+    dead_discarded: int
+    movies_added: int
+    series_episodes_added: int
+    results: List[dict]
+

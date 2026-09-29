@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas, tmdb
 from ..ai_finder import ai_find_movie
+from ..torrent_engine import search_torrents_for_media, resolve_debrid_link
+from ..downloader import start_background_download, list_active_downloads, cancel_download
+from ..vod_scanner import scan_and_import_smart_vod
 from ..auth import get_current_user, require_admin
 from ..config import MEDIA_MOVIES_DIR, MEDIA_THUMBS_DIR, TMDB_API_KEY
 from ..database import get_db
@@ -1239,4 +1242,94 @@ async def import_ai_stream(
             pass
 
     return movie
+
+
+# ---------------------- Rotas de Torrents & Stremio Engine (Pillar 1) ----------------------
+
+@router.get("/torrents/search", response_model=schemas.TorrentSearchResponse)
+async def search_movie_torrents(
+    q: str,
+    year: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Pesquisa torrents e magnet links diretamente para o título, priorizando Dublados PT-BR."""
+    if not q or not q.strip():
+        raise HTTPException(status_code=400, detail="Informe um termo para buscar torrents.")
+    return await search_torrents_for_media(query=q.strip(), year=year)
+
+
+@router.post("/torrents/resolve", response_model=schemas.TorrentResolveResponse)
+async def resolve_torrent_stream(
+    payload: schemas.TorrentResolveRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Resolve um Magnet Link em link direto de alta velocidade via Debrid ou gateway."""
+    direct_link = await resolve_debrid_link(magnet=payload.magnet, api_key=payload.debrid_token)
+    if direct_link:
+        return schemas.TorrentResolveResponse(
+            stream_url=direct_link,
+            player_type="direct",
+            title="Stream Direto (Debrid 1Gbps)",
+        )
+
+    # Se não houver token Debrid, retorna o magnet link formatado para clientes locais/VLC/WebTorrent
+    return schemas.TorrentResolveResponse(
+        stream_url=payload.magnet,
+        player_type="magnet",
+        title="Magnet Link (P2P)",
+    )
+
+
+# ---------------------- Rotas de Gerenciador de Downloads (Pillar 2) ----------------------
+
+@admin_router.post("/downloads/start", response_model=schemas.DownloadTaskOut)
+async def start_movie_download(
+    payload: schemas.DownloadStartRequest,
+    db: Session = Depends(get_db),
+):
+    """Inicia o download de qualquer vídeo (YouTube, Drive, MP4, m3u8, etc.) em segundo plano."""
+    if not payload.url or not payload.url.strip():
+        raise HTTPException(status_code=400, detail="Informe a URL do vídeo para download.")
+    task = await start_background_download(
+        url=payload.url.strip(),
+        title=payload.title,
+        tmdb_id=payload.tmdb_id,
+        is_private=payload.is_private,
+    )
+    return task.to_dict()
+
+
+@admin_router.get("/downloads/active", response_model=list[schemas.DownloadTaskOut])
+def get_active_downloads():
+    """Lista todos os downloads ativos e recentes com progresso em tempo real."""
+    return list_active_downloads()
+
+
+@admin_router.post("/downloads/cancel/{task_id}")
+def cancel_movie_download(task_id: str):
+    """Cancela um download em andamento."""
+    success = cancel_download(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Tarefa de download não encontrada.")
+    return {"ok": True, "message": f"Download {task_id} cancelado."}
+
+
+# ---------------------- Rota de Importação VOD Inteligente (Pillar 3) ----------------------
+
+@admin_router.post("/movies/smart-vod-import", response_model=schemas.SmartVODImportResponse)
+async def smart_vod_import(
+    payload: schemas.SmartVODImportRequest,
+    db: Session = Depends(get_db),
+):
+    """Importa lista VOD com verificação assíncrona de links vivos e separação inteligente de séries e filmes."""
+    raw_items = [it.model_dump() for it in payload.items]
+    return await scan_and_import_smart_vod(
+        items=raw_items,
+        source_name=payload.source_name or "Importação VOD Inteligente",
+        auto_categorize=payload.auto_categorize_series,
+        verify_live=payload.verify_live_streams,
+        is_private=payload.is_private,
+        db=db,
+    )
+
 

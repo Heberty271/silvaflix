@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { TVProvider } from "@/lib/tv-context";
@@ -8,12 +7,6 @@ import { ThemeProvider } from "@/lib/theme-context";
 import { FloatingPlayerProvider } from "@/lib/floating-player-context";
 import { ProfileSelector } from "@/components/ProfileSelector";
 import { FloatingPlayer } from "@/components/FloatingPlayer";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  weight: ["400", "500", "600", "700", "800", "900"],
-});
 
 export const viewport: Viewport = {
   themeColor: "#E11D34",
@@ -43,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={inter.variable}>
+    <html lang="pt-BR">
       <body className="font-sans min-h-screen bg-void text-ink antialiased selection:bg-brand selection:text-white">
         <AuthProvider>
           <TVProvider>
