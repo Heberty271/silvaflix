@@ -8,11 +8,50 @@ import subprocess
 import threading
 import urllib.request
 
+# Força codificação UTF-8 no terminal Windows para evitar UnicodeEncodeError com emojis
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 NPOINT_URL = "https://api.npoint.io/a008871770ac1c671939"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CLOUDFLARED_PATH = os.path.join(BASE_DIR, "bin", "cloudflared.exe")
 
 processes = []
+
+def kill_process_on_port(port: int = 8000):
+    """Encerra qualquer processo antigo travado na porta especificada antes de iniciar"""
+    try:
+        if os.name == "nt":
+            out = subprocess.check_output(f"netstat -ano | findstr :{port}", shell=True, text=True, stderr=subprocess.DEVNULL)
+            for line in out.strip().splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and "LISTENING" in parts:
+                    pid = parts[-1]
+                    if pid.isdigit() and int(pid) != os.getpid():
+                        subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def drain_stream(pipe):
+    """Lê continuamente a saída para evitar travamento de buffer do SO (pipe deadlock)"""
+    try:
+        for _ in iter(pipe.readline, ""):
+            pass
+    except Exception:
+        pass
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
 
 def update_npoint(url: str):
     """Envia a URL ativa para a ponte npoint.io"""
@@ -57,6 +96,9 @@ def main():
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
+    # Limpa portas travadas
+    kill_process_on_port(8000)
+
     os.system("cls" if os.name == "nt" else "clear")
     print("=" * 65)
     print("           INICIANDO SILVAFLIX STREAMING SERVER")
@@ -90,6 +132,9 @@ def main():
         input("\nPressione Enter para sair...")
         cleanup()
 
+    # Drena stdout do backend em thread separada para não travar o buffer
+    threading.Thread(target=drain_stream, args=(backend_proc.stdout,), daemon=True).start()
+
     print("[2/3] Conectando ao Cloudflare Tunnel...")
 
     if not os.path.exists(CLOUDFLARED_PATH):
@@ -121,6 +166,9 @@ def main():
             tunnel_url = match.group(0)
             break
 
+    # Continua drenando a saída do Cloudflare em background
+    threading.Thread(target=drain_stream, args=(cf_proc.stdout,), daemon=True).start()
+
     if tunnel_url:
         print("[3/3] Sincronizando link com o Vercel...")
         success = update_npoint(tunnel_url)
@@ -146,10 +194,7 @@ def main():
         while True:
             time.sleep(1)
             if backend_proc.poll() is not None:
-                err_out = backend_proc.stdout.read() if backend_proc.stdout else ""
-                print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}):")
-                if err_out:
-                    print(err_out)
+                print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}).")
                 input("\nPressione Enter para fechar...")
                 break
             if cf_proc.poll() is not None:
