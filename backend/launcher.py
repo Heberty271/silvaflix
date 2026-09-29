@@ -7,6 +7,7 @@ import signal
 import subprocess
 import threading
 import urllib.request
+from collections import deque
 
 # Força codificação UTF-8 no terminal Windows para evitar UnicodeEncodeError com emojis
 if hasattr(sys.stdout, "reconfigure"):
@@ -25,26 +26,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CLOUDFLARED_PATH = os.path.join(BASE_DIR, "bin", "cloudflared.exe")
 
 processes = []
+backend_logs = deque(maxlen=100)
 
 def kill_process_on_port(port: int = 8000):
     """Encerra qualquer processo antigo travado na porta especificada antes de iniciar"""
-    try:
-        if os.name == "nt":
-            out = subprocess.check_output(f"netstat -ano | findstr :{port}", shell=True, text=True, stderr=subprocess.DEVNULL)
-            for line in out.strip().splitlines():
-                parts = line.split()
-                if len(parts) >= 5 and "LISTENING" in parts:
-                    pid = parts[-1]
-                    if pid.isdigit() and int(pid) != os.getpid():
-                        subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-def drain_stream(pipe):
-    """Lê continuamente a saída para evitar travamento de buffer do SO (pipe deadlock)"""
-    try:
-        for _ in iter(pipe.readline, ""):
+    if os.name == "nt":
+        try:
+            ps_cmd = f"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}"
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            time.sleep(1)
+        except Exception:
             pass
+
+def drain_and_record(pipe, log_buffer):
+    """Lê continuamente a saída para evitar travamento de buffer e grava as últimas linhas para debug"""
+    try:
+        for line in iter(pipe.readline, ""):
+            if not line:
+                break
+            log_buffer.append(line.rstrip())
     except Exception:
         pass
     finally:
@@ -92,6 +92,19 @@ def cleanup(*args):
             pass
     sys.exit(0)
 
+def wait_for_backend(timeout_seconds: int = 15) -> bool:
+    """Verifica se o backend FastAPI respondeu com sucesso no endpoint /health"""
+    start = time.time()
+    while time.time() - start < timeout_seconds:
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8000/health")
+            with urllib.request.urlopen(req, timeout=1) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
 def main():
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
@@ -122,18 +135,18 @@ def main():
     )
     processes.append(backend_proc)
 
-    time.sleep(2)
-    if backend_proc.poll() is not None:
-        err_out = backend_proc.stdout.read() if backend_proc.stdout else ""
-        print("\n[ERRO CRÍTICO] O servidor backend FastAPI falhou ao iniciar!")
+    # Drena stdout do backend continuamente gravando no buffer
+    threading.Thread(target=drain_and_record, args=(backend_proc.stdout, backend_logs), daemon=True).start()
+
+    # Aguarda o backend ficar 100% online
+    if not wait_for_backend(15):
+        print("\n[ERRO CRÍTICO] O servidor backend FastAPI não respondeu no tempo esperado!")
         print("-" * 65)
-        print(err_out)
+        for line in list(backend_logs):
+            print(line)
         print("-" * 65)
         input("\nPressione Enter para sair...")
         cleanup()
-
-    # Drena stdout do backend em thread separada para não travar o buffer
-    threading.Thread(target=drain_stream, args=(backend_proc.stdout,), daemon=True).start()
 
     print("[2/3] Conectando ao Cloudflare Tunnel...")
 
@@ -158,16 +171,18 @@ def main():
 
     tunnel_url = None
     url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+    cf_logs = deque(maxlen=50)
 
     # Lê as linhas do cloudflared até achar o link
     for line in iter(cf_proc.stdout.readline, ""):
+        cf_logs.append(line.rstrip())
         match = url_pattern.search(line)
         if match:
             tunnel_url = match.group(0)
             break
 
     # Continua drenando a saída do Cloudflare em background
-    threading.Thread(target=drain_stream, args=(cf_proc.stdout,), daemon=True).start()
+    threading.Thread(target=drain_and_record, args=(cf_proc.stdout, cf_logs), daemon=True).start()
 
     if tunnel_url:
         print("[3/3] Sincronizando link com o Vercel...")
@@ -194,11 +209,15 @@ def main():
         while True:
             time.sleep(1)
             if backend_proc.poll() is not None:
-                print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}).")
+                print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}):")
+                for line in list(backend_logs)[-20:]:
+                    print("   " + line)
                 input("\nPressione Enter para fechar...")
                 break
             if cf_proc.poll() is not None:
-                print(f"\n[!] O túnel Cloudflare encerrou (código {cf_proc.poll()}).")
+                print(f"\n[!] O túnel Cloudflare encerrou (código {cf_proc.poll()}):")
+                for line in list(cf_logs)[-20:]:
+                    print("   " + line)
                 input("\nPressione Enter para fechar...")
                 break
     except KeyboardInterrupt:
