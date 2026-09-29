@@ -20,6 +20,102 @@ function formatTime(seconds: number): string {
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+function parseEmbedDetails(url: string, movie?: Movie): {
+  tmdbId?: string;
+  isSeries?: boolean;
+  season?: number;
+  episode?: number;
+} {
+  let isSeries = movie?.is_series || false;
+  let season = movie?.season_number || 1;
+  let episode = movie?.episode_number || 1;
+  let tmdbId: string | undefined;
+
+  if (url) {
+    const tvMatch = url.match(/\/(?:tv|embed\/tv)\/(\d+)(?:\/(\d+))?(?:\/(\d+))?/i);
+    if (tvMatch) {
+      tmdbId = tvMatch[1];
+      isSeries = true;
+      if (tvMatch[2]) season = parseInt(tvMatch[2], 10);
+      if (tvMatch[3]) episode = parseInt(tvMatch[3], 10);
+    } else {
+      const movieMatch = url.match(/\/(?:movie|embed\/movie)\/(\d+)/i);
+      if (movieMatch) {
+        tmdbId = movieMatch[1];
+      } else {
+        const tmdbParamMatch = url.match(/[?&]tmdb(?:_id)?=(\d+)/i);
+        if (tmdbParamMatch) {
+          tmdbId = tmdbParamMatch[1];
+        } else {
+          const anyNum = url.match(/\/(\d{3,8})/);
+          if (anyNum) tmdbId = anyNum[1];
+        }
+      }
+    }
+  }
+
+  return { tmdbId, isSeries, season, episode };
+}
+
+function getAvailableEmbedServers(activeUrl: string, movie?: Movie) {
+  const { tmdbId, isSeries, season, episode } = parseEmbedDetails(activeUrl, movie);
+  if (!tmdbId) return [];
+
+  const s = season || 1;
+  const e = episode || 1;
+
+  return [
+    {
+      name: "VidLink Ultra HD",
+      desc: "Dublado / Multi-Áudio & Legendas PT-BR (1080p/4K)",
+      isDubbed: true,
+      url: isSeries
+        ? `https://vidlink.pro/tv/${tmdbId}/${s}/${e}?primaryColor=e50914`
+        : `https://vidlink.pro/movie/${tmdbId}?primaryColor=e50914`,
+    },
+    {
+      name: "AutoEmbed Cloud",
+      desc: "Dublado & Multi-Áudio (1080p Full HD)",
+      isDubbed: true,
+      url: isSeries
+        ? `https://player.autoembed.cc/embed/tv/${tmdbId}/${s}/${e}`
+        : `https://player.autoembed.cc/embed/movie/${tmdbId}`,
+    },
+    {
+      name: "SmashyStream Turbo",
+      desc: "Multi-Áudio & Rápido (1080p HD)",
+      isDubbed: true,
+      url: isSeries
+        ? `https://embed.smashystream.com/playere.php?tmdb=${tmdbId}&season=${s}&episode=${e}`
+        : `https://embed.smashystream.com/playere.php?tmdb=${tmdbId}`,
+    },
+    {
+      name: "VidSrc Cinema HD",
+      desc: "HD Master Estável",
+      isDubbed: false,
+      url: isSeries
+        ? `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${s}/${e}`
+        : `https://vidsrc.cc/v2/embed/movie/${tmdbId}`,
+    },
+    {
+      name: "SuperEmbed Global",
+      desc: "Multi-Servidores com Alternância Dinâmica",
+      isDubbed: false,
+      url: isSeries
+        ? `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=${s}&e=${e}`
+        : `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+    },
+    {
+      name: "EmbedSu Fast",
+      desc: "Buffer Leve e Ágil",
+      isDubbed: false,
+      url: isSeries
+        ? `https://embed.su/embed/tv/${tmdbId}/${s}/${e}`
+        : `https://embed.su/embed/movie/${tmdbId}`,
+    },
+  ];
+}
+
 export function VideoPlayer({
   src,
   title,
@@ -312,6 +408,9 @@ export function VideoPlayer({
     setNextCountdown(null);
   };
 
+  const [selectedEmbedUrl, setSelectedEmbedUrl] = useState<string | null>(null);
+  const [showServerMenu, setShowServerMenu] = useState(false);
+
   const isEmbed = !!(
     (movie?.video_url && (
       movie.video_url.includes("vidlink.pro") ||
@@ -335,6 +434,8 @@ export function VideoPlayer({
     ))
   );
   const activeEmbedUrl = movie?.video_url || src;
+  const embedServers = isEmbed ? getAvailableEmbedServers(activeEmbedUrl, movie) : [];
+  const currentActiveEmbedUrl = selectedEmbedUrl || activeEmbedUrl;
 
   // --- Inicialização de Fonte HLS ou Vídeo Direto ---
   useEffect(() => {
@@ -730,16 +831,99 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Elemento de Vídeo com Calibração ou Iframe Embed */}
+      {/* Elemento de Vídeo com Calibração ou Iframe Embed Sandboxed */}
       {isEmbed ? (
-        <div className="relative aspect-video w-full bg-black">
-          <iframe
-            src={activeEmbedUrl}
-            title={title}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            allowFullScreen
-            className="h-full w-full border-0"
-          />
+        <div className="relative aspect-video w-full bg-black flex flex-col">
+          {/* Barra Superior de Servidores & Proteção Familiar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-black/90 px-3 py-2 text-xs text-white backdrop-blur z-20">
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                <span>🛡️</span>
+                <span>Proteção Familiar Ativa (Popups & +18 Bloqueados)</span>
+              </span>
+              <span className="hidden sm:inline rounded bg-white/10 px-2 py-0.5 text-[10px] text-mute">
+                🇧🇷 Áudio Dublado / Multi-Áudio PT-BR
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {embedServers.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowServerMenu((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-lg border border-rule bg-panel2 px-2.5 py-1 text-xs font-bold text-ink hover:border-brand transition-all"
+                  >
+                    <span>⚡ Trocar Servidor ({embedServers.findIndex((s) => s.url === currentActiveEmbedUrl) + 1 || 1}/{embedServers.length})</span>
+                    <span>▾</span>
+                  </button>
+                  {showServerMenu && (
+                    <div className="absolute right-0 top-8 w-72 rounded-xl border border-rule bg-panel p-1.5 shadow-2xl z-50 animate-fade-in space-y-1">
+                      <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-mute border-b border-rule/50">
+                        Servidores Limpos & Verificados
+                      </p>
+                      {embedServers.map((srv, idx) => {
+                        const isCurrent = srv.url === currentActiveEmbedUrl;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setSelectedEmbedUrl(srv.url);
+                              setShowServerMenu(false);
+                            }}
+                            className={`w-full text-left rounded-lg px-2.5 py-2 transition-all flex flex-col ${
+                              isCurrent ? "bg-brand text-white font-bold" : "hover:bg-panel2 text-ink"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span>🎬 {srv.name}</span>
+                              {srv.isDubbed && (
+                                <span className={`text-[9px] px-1.5 py-0.2 rounded ${isCurrent ? "bg-white/20 text-white" : "bg-emerald-500/20 text-emerald-400 font-bold"}`}>
+                                  PT-BR
+                                </span>
+                              )}
+                            </div>
+                            <span className={`text-[10px] ${isCurrent ? "text-white/80" : "text-mute"}`}>
+                              {srv.desc}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  const current = currentActiveEmbedUrl;
+                  setSelectedEmbedUrl("");
+                  setTimeout(() => setSelectedEmbedUrl(current), 50);
+                }}
+                title="Recarregar player caso o vídeo trave"
+                className="rounded-lg border border-rule bg-panel2 px-2 py-1 text-xs font-semibold text-mute hover:text-ink transition-all"
+              >
+                🔄 Recarregar
+              </button>
+            </div>
+          </div>
+
+          <div className="relative flex-1 w-full bg-black">
+            {currentActiveEmbedUrl && (
+              <iframe
+                key={currentActiveEmbedUrl}
+                src={currentActiveEmbedUrl}
+                title={title}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                referrerPolicy="no-referrer"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                allowFullScreen
+                className="h-full w-full border-0"
+              />
+            )}
+          </div>
         </div>
       ) : (
         <video

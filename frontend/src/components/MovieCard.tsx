@@ -87,6 +87,8 @@ export function MovieCard({
               <iframe
                 src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1&mute=1&controls=0&modestbranding=1&loop=1&playlist=${trailerId}`}
                 title={`Prévia de ${movie.title}`}
+                sandbox="allow-scripts allow-same-origin allow-presentation"
+                referrerPolicy="no-referrer"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 className="h-full w-full border-0 scale-125 object-cover"
               />

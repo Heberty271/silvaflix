@@ -261,7 +261,8 @@ async def search_canonical_tmdb(
 
 def build_stream_providers(meta: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Gera a lista de servidores e provedores de stream, PRIORIZANDO DUBLADO EM PORTUGUÊS (PT-BR).
+    Gera a lista de servidores e provedores de stream LIMPOS e SEGUROS para a família,
+    eliminando sites com anúncios abusivos e priorizando áudio em português e legendas.
     """
     tmdb_id = meta["tmdb_id"]
     imdb_id = meta.get("imdb_id")
@@ -271,64 +272,83 @@ def build_stream_providers(meta: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     providers: List[Dict[str, Any]] = []
 
-    # 1. SuperFlix / EmbedFlix Brasil (100% Dublado PT-BR / Servidor Brasileiro)
-    if is_series:
-        superflix_url = f"https://superflixapi.top/serie/{tmdb_id}/{season}/{episode}"
-    else:
-        superflix_url = f"https://superflixapi.top/filme/{tmdb_id}"
-
-    providers.append({
-        "provider_name": "SuperFlix Brasil (Servidor 1 - Dublado PT-BR)",
-        "player_url": superflix_url,
-        "quality": "1080p Full HD",
-        "language": "Dublado em Português (PT-BR)",
-        "player_type": "embed",
-        "is_direct": False,
-        "is_dubbed": True,
-        "stream_type": "embed",
-        "description": "Áudio em português brasileiro nativo, alta definição e carregamento rápido.",
-        "check_url": superflix_url,
-    })
-
-    # 2. WarezCDN / EmbedBR (Dublado & Dual Áudio)
-    if is_series:
-        warez_url = f"https://embed.warezcdn.net/serie/{tmdb_id}/{season}/{episode}"
-    else:
-        warez_url = f"https://embed.warezcdn.net/filme/{tmdb_id}"
-
-    providers.append({
-        "provider_name": "WarezCDN Brasil (Servidor 2 - Dublado PT-BR)",
-        "player_url": warez_url,
-        "quality": "1080p Full HD",
-        "language": "Dublado em Português (PT-BR)",
-        "player_type": "embed",
-        "is_direct": False,
-        "is_dubbed": True,
-        "stream_type": "embed",
-        "description": "Transmissão brasileira com opções de áudio dublado e legendado.",
-        "check_url": warez_url,
-    })
-
-    # 3. VidLink Pro (Ultra HD com seleção de idioma e legendas em português)
+    # 1. VidLink Pro (Servidor Limpo, Sem Anúncios +18, 4K/1080p e Legendas PT-BR)
     if is_series:
         vidlink_url = f"https://vidlink.pro/tv/{tmdb_id}/{season}/{episode}?primaryColor=e50914"
     else:
         vidlink_url = f"https://vidlink.pro/movie/{tmdb_id}?primaryColor=e50914"
 
     providers.append({
-        "provider_name": "VidLink Ultra HD (Servidor 3 - Dual Áudio / Multi)",
+        "provider_name": "VidLink Ultra HD (Servidor 1 - Limpo & Rápido)",
         "player_url": vidlink_url,
         "quality": "4K / 1080p Ultra HD",
-        "language": "Dual Áudio & Legendas PT-BR",
+        "language": "Dublado / Multi-Áudio & Legendas PT-BR",
         "player_type": "embed",
         "is_direct": False,
         "is_dubbed": True,
         "stream_type": "embed",
-        "description": "Buffer instantâneo em 4K/1080p com suporte a múltiplos canais de áudio e legendas.",
+        "description": "Player oficial blindado contra anúncios, buffer instantâneo e suporte a legendas em português.",
         "check_url": vidlink_url,
     })
 
-    # 4. SuperEmbed / MultiEmbed (Múltiplos Servidores com Dublado)
+    # 2. AutoEmbed Cloud (CDN Global Segura e Ad-Free)
+    if is_series:
+        autoembed_url = f"https://player.autoembed.cc/embed/tv/{tmdb_id}/{season}/{episode}"
+    else:
+        autoembed_url = f"https://player.autoembed.cc/embed/movie/{tmdb_id}"
+
+    providers.append({
+        "provider_name": "AutoEmbed Cloud (Servidor 2 - CDN Protegida)",
+        "player_url": autoembed_url,
+        "quality": "1080p Full HD",
+        "language": "Dublado & Multi-Áudio",
+        "player_type": "embed",
+        "is_direct": False,
+        "is_dubbed": True,
+        "stream_type": "embed",
+        "description": "CDN global de streaming protegida com controle de qualidade e carregamento acelerado.",
+        "check_url": autoembed_url,
+    })
+
+    # 3. SmashyStream Turbo (Player Limpo e Seguro)
+    if is_series:
+        smashy_url = f"https://embed.smashystream.com/playere.php?tmdb={tmdb_id}&season={season}&episode={episode}"
+    else:
+        smashy_url = f"https://embed.smashystream.com/playere.php?tmdb={tmdb_id}"
+
+    providers.append({
+        "provider_name": "SmashyStream Turbo (Servidor 3 - Player Seguro)",
+        "player_url": smashy_url,
+        "quality": "1080p HD",
+        "language": "Multi-Áudio & Legendas",
+        "player_type": "embed",
+        "is_direct": False,
+        "is_dubbed": True,
+        "stream_type": "embed",
+        "description": "Carregamento acelerado sem travamentos e livre de popups invasivos.",
+        "check_url": smashy_url,
+    })
+
+    # 4. VidSrc v2 HD Master
+    if is_series:
+        vidsrc_url = f"https://vidsrc.cc/v2/embed/tv/{tmdb_id}/{season}/{episode}"
+    else:
+        vidsrc_url = f"https://vidsrc.cc/v2/embed/movie/{tmdb_id}"
+
+    providers.append({
+        "provider_name": "VidSrc Cinema (Servidor 4 - HD Master)",
+        "player_url": vidsrc_url,
+        "quality": "1080p HD",
+        "language": "Dublado / Legendado",
+        "player_type": "embed",
+        "is_direct": False,
+        "is_dubbed": False,
+        "stream_type": "embed",
+        "description": "Transmissão estável e otimizada para Smart TVs e navegadores.",
+        "check_url": vidsrc_url,
+    })
+
+    # 5. SuperEmbed Multi-Servidores
     if imdb_id:
         if is_series:
             multiembed_url = f"https://multiembed.mov/?video_id={imdb_id}&s={season}&e={episode}"
@@ -341,82 +361,39 @@ def build_stream_providers(meta: Dict[str, Any]) -> List[Dict[str, Any]]:
             multiembed_url = f"https://multiembed.mov/?video_id={tmdb_id}&tmdb=1"
 
     providers.append({
-        "provider_name": "SuperEmbed Global (Servidor 4 - Multi-Servidores)",
+        "provider_name": "SuperEmbed Global (Servidor 5 - Multi-Servidores)",
         "player_url": multiembed_url,
         "quality": "1080p / 720p HD",
         "language": "Dublado & Dual Áudio",
         "player_type": "embed",
         "is_direct": False,
-        "is_dubbed": True,
+        "is_dubbed": False,
         "stream_type": "embed",
-        "description": "Agrega múltiplos servidores automáticos com troca dinâmica de fonte.",
+        "description": "Agrega servidores automáticos de contingência com troca dinâmica de fonte.",
         "check_url": multiembed_url,
     })
 
-    # 5. AutoEmbed Cloud
+    # 6. Embed.su Fast Stream
     if is_series:
-        autoembed_url = f"https://player.autoembed.cc/embed/tv/{tmdb_id}/{season}/{episode}"
+        embedsu_url = f"https://embed.su/embed/tv/{tmdb_id}/{season}/{episode}"
     else:
-        autoembed_url = f"https://player.autoembed.cc/embed/movie/{tmdb_id}"
+        embedsu_url = f"https://embed.su/embed/movie/{tmdb_id}"
 
     providers.append({
-        "provider_name": "AutoEmbed Cloud (Servidor 5 - CDN Global)",
-        "player_url": autoembed_url,
-        "quality": "1080p Full HD",
-        "language": "Multi-Áudio / Legendas",
-        "player_type": "embed",
-        "is_direct": False,
-        "is_dubbed": False,
-        "stream_type": "embed",
-        "description": "CDN global protegida contra quedas e travamentos.",
-        "check_url": autoembed_url,
-    })
-
-    # 6. VidSrc.cc Cinema HD
-    if is_series:
-        vidsrc_url = f"https://vidsrc.cc/v2/embed/tv/{tmdb_id}/{season}/{episode}"
-    else:
-        vidsrc_url = f"https://vidsrc.cc/v2/embed/movie/{tmdb_id}"
-
-    providers.append({
-        "provider_name": "VidSrc Cinema (Servidor 6 - HD Master)",
-        "player_url": vidsrc_url,
+        "provider_name": "EmbedSu Fast (Servidor 6 - Direto)",
+        "player_url": embedsu_url,
         "quality": "1080p HD",
-        "language": "Dublado / Legendado",
-        "player_type": "embed",
-        "is_direct": False,
-        "is_dubbed": False,
-        "stream_type": "embed",
-        "description": "Transmissão estável para Smart TVs e navegadores.",
-        "check_url": vidsrc_url,
-    })
-
-    # 7. 2Embed Prime
-    if imdb_id:
-        if is_series:
-            twoembed_url = f"https://www.2embed.cc/embedtv/{imdb_id}&s={season}&e={episode}"
-        else:
-            twoembed_url = f"https://www.2embed.cc/embed/{imdb_id}"
-    else:
-        if is_series:
-            twoembed_url = f"https://www.2embed.cc/embedtv/{tmdb_id}&s={season}&e={episode}"
-        else:
-            twoembed_url = f"https://www.2embed.cc/embed/{tmdb_id}"
-
-    providers.append({
-        "provider_name": "2Embed Prime (Servidor 7 - Contingência)",
-        "player_url": twoembed_url,
-        "quality": "720p / 1080p",
         "language": "Multi-Áudio",
         "player_type": "embed",
         "is_direct": False,
         "is_dubbed": False,
         "stream_type": "embed",
-        "description": "Linha de contingência rápida para filmes de catálogo e lançamentos.",
-        "check_url": twoembed_url,
+        "description": "Servidor ultrarrápido com buffer leve para celulares e computadores.",
+        "check_url": embedsu_url,
     })
 
     return providers
+
 
 
 async def verify_provider_health(provider: Dict[str, Any], client: httpx.AsyncClient) -> Dict[str, Any]:

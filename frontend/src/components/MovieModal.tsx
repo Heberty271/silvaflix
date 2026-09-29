@@ -82,6 +82,8 @@ export function MovieModal({ movie, onClose }: MovieModalProps) {
             <iframe
               src={`https://www.youtube-nocookie.com/embed/${trailerId}?autoplay=1`}
               title={`Trailer Oficial de ${movie.title}`}
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              referrerPolicy="no-referrer"
               className="h-full w-full border-0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen

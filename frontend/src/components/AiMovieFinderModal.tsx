@@ -462,6 +462,8 @@ export function AiMovieFinderModal({
                     <iframe
                       src={`https://www.youtube-nocookie.com/embed/${result.metadata.trailer_youtube_id}?autoplay=1`}
                       title="Trailer"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                      referrerPolicy="no-referrer"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                       allowFullScreen
                       className="h-full w-full border-0"
@@ -505,19 +507,28 @@ export function AiMovieFinderModal({
                     </div>
                   </div>
 
-                  {/* URL do Stream / Player */}
-                  <div className="rounded-xl border border-rule/70 bg-void p-3 text-xs font-mono text-mute break-all select-all flex items-center justify-between gap-3">
-                    <span className="truncate">{activePlayer.player_url}</span>
+                  {/* URL do Stream / Player & Selo de Proteção Familiar */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-xl border border-rule/70 bg-void p-3 text-xs">
+                    <div className="flex items-center gap-2 truncate max-w-full">
+                      <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400 flex items-center gap-1 flex-shrink-0">
+                        <span>🛡️</span>
+                        <span>Proteção Familiar (+18 Bloqueado)</span>
+                      </span>
+                      <span className="font-mono text-mute truncate select-all">{activePlayer.player_url}</span>
+                    </div>
                     <span className="text-[10px] text-emerald-400 font-sans font-bold flex-shrink-0">
                       ⚡ {activePlayer.latency_ms || 120}ms
                     </span>
                   </div>
 
-                  {/* Player de Preview dentro do Modal */}
+                  {/* Player de Preview dentro do Modal com Sandbox Anti-+18 */}
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black mt-3">
                     <iframe
+                      key={activePlayer.player_url}
                       src={activePlayer.player_url}
                       title={result.metadata.title}
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                      referrerPolicy="no-referrer"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                       allowFullScreen
                       className="h-full w-full border-0"

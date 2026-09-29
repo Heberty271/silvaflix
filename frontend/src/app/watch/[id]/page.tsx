@@ -676,6 +676,8 @@ export default function WatchPage() {
                 <iframe
                   src={`https://www.youtube-nocookie.com/embed/${trailerModalId}?autoplay=1`}
                   title={`Trailer de ${movie?.title}`}
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                  referrerPolicy="no-referrer"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                   className="h-full w-full border-0"
