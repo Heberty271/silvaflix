@@ -218,11 +218,22 @@ export function AiMovieFinderModal({
           router.push(`/watch/${created.id}`);
         }
       } else {
-        // Abre o link do magnet diretamente no cliente de torrent / Stremio
-        window.location.href = magnet;
+        // Copia o magnet para o clipboard e orienta o usuário
+        if (navigator?.clipboard) {
+          await navigator.clipboard.writeText(magnet);
+        }
+        setSavedSuccess("📋 Link Magnet copiado! Cole no seu qBittorrent/Stremio ou use a aba '🛡️ Servidores Web Blindados' para assistir no navegador sem baixar.");
+        try {
+          window.location.href = magnet;
+        } catch {
+          // Ignora se o navegador não tiver cliente torrent instalado
+        }
       }
     } catch {
-      window.location.href = magnet;
+      if (navigator?.clipboard) {
+        navigator.clipboard.writeText(magnet);
+      }
+      setSavedSuccess("📋 Link Magnet copiado! Cole no seu qBittorrent/Stremio para baixar.");
     } finally {
       setResolvingDebrid(null);
     }
