@@ -74,16 +74,27 @@ def main():
     backend_proc = subprocess.Popen(
         uvicorn_cmd,
         cwd=BASE_DIR,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     processes.append(backend_proc)
 
     time.sleep(2)
+    if backend_proc.poll() is not None:
+        err_out = backend_proc.stdout.read() if backend_proc.stdout else ""
+        print("\n[ERRO CRÍTICO] O servidor backend FastAPI falhou ao iniciar!")
+        print("-" * 65)
+        print(err_out)
+        print("-" * 65)
+        input("\nPressione Enter para sair...")
+        cleanup()
+
     print("[2/3] Conectando ao Cloudflare Tunnel...")
 
     if not os.path.exists(CLOUDFLARED_PATH):
         print(f"[ERRO] Executável do Cloudflare não encontrado em: {CLOUDFLARED_PATH}")
+        input("\nPressione Enter para sair...")
         cleanup()
 
     # 2. Inicia o Cloudflare Tunnel e captura o link
@@ -130,11 +141,20 @@ def main():
     else:
         print("[!] Não foi possível capturar o link do Cloudflare automaticamente.")
 
-    # Mantém o processo rodando
+    # Mantém o processo rodando e monitora
     try:
         while True:
             time.sleep(1)
-            if backend_proc.poll() is not None or cf_proc.poll() is not None:
+            if backend_proc.poll() is not None:
+                err_out = backend_proc.stdout.read() if backend_proc.stdout else ""
+                print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}):")
+                if err_out:
+                    print(err_out)
+                input("\nPressione Enter para fechar...")
+                break
+            if cf_proc.poll() is not None:
+                print(f"\n[!] O túnel Cloudflare encerrou (código {cf_proc.poll()}).")
+                input("\nPressione Enter para fechar...")
                 break
     except KeyboardInterrupt:
         pass

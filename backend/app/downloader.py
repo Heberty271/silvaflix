@@ -12,10 +12,14 @@ import uuid
 from typing import Dict, Optional, Any, List
 from datetime import datetime
 
-import yt_dlp
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
 from sqlalchemy.orm import Session
 
-from .config import MOVIES_DIR, TMDB_API_KEY
+from .config import MEDIA_MOVIES_DIR, TMDB_API_KEY
 from .database import SessionLocal
 from .models import Movie
 from .ai_finder import search_canonical_tmdb
@@ -121,9 +125,14 @@ def run_ytdlp_download(task: DownloadTask):
             task.progress_percent = 100.0
             task.eta_str = "Finalizado"
 
-    os.makedirs(MOVIES_DIR, exist_ok=True)
+    if not yt_dlp:
+        task.status = "error"
+        task.error_message = "Módulo yt-dlp não instalado. Instale com 'pip install yt-dlp'."
+        return
+
+    os.makedirs(MEDIA_MOVIES_DIR, exist_ok=True)
     clean_base = sanitize_filename(task.title)
-    out_template = os.path.join(MOVIES_DIR, f"{clean_base}_%(id)s.%(ext)s")
+    out_template = os.path.join(MEDIA_MOVIES_DIR, f"{clean_base}_%(id)s.%(ext)s")
 
     ydl_opts = {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
