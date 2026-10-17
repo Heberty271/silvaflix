@@ -228,7 +228,7 @@ export default function WatchPage() {
                 title={movie.title}
                 movieId={movie.id}
                 movie={movie}
-                subtitleUrl={api.subtitleUrl(movie.id)}
+                subtitleUrl={movie.is_external ? undefined : api.subtitleUrl(movie.id)}
                 audioTracks={audioTracks}
                 currentAudioTrack={currentTrack}
                 onAudioTrackChange={setCurrentTrack}

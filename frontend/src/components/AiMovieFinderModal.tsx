@@ -9,8 +9,9 @@ import {
   AIMetadata,
   Movie,
   TorrentSearchResponse,
-  TorrentStreamOption,
   DownloadTaskOut,
+  GoogleDriveInspectResponse,
+  GoogleDriveFileItem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -21,14 +22,14 @@ interface AiMovieFinderModalProps {
 }
 
 const QUICK_SUGGESTIONS = [
-  "Harry Potter 1",
+  "Harry Potter",
   "Vingadores Ultimato",
+  "Arthur e os Minimoys",
   "Interestelar",
+  "O Senhor dos Anéis",
+  "Homem-Aranha",
+  "Velozes e Furiosos",
   "Matrix",
-  "O Senhor dos Anéis 1",
-  "Avatar 2",
-  "Stranger Things S01E01",
-  "Homem-Aranha Através do Aranhaverso",
 ];
 
 export function AiMovieFinderModal({
@@ -37,9 +38,11 @@ export function AiMovieFinderModal({
   onMovieAdded,
 }: AiMovieFinderModalProps) {
   const router = useRouter();
-  const { token, user } = useAuth();
+  const { token } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"torrents" | "downloader" | "web_streams" | "smart_vod">("torrents");
+  const [activeTab, setActiveTab] = useState<
+    "web_streams" | "gdrive" | "torrents" | "downloader" | "smart_vod"
+  >("web_streams");
 
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -48,18 +51,25 @@ export function AiMovieFinderModal({
 
   // Resultados dos Provedores
   const [aiResult, setAiResult] = useState<AISearchResultResponse | null>(null);
+  const [candidatesList, setCandidatesList] = useState<AIMetadata[]>([]);
   const [torrentResult, setTorrentResult] = useState<TorrentSearchResponse | null>(null);
   const [activePlayer, setActivePlayer] = useState<AIStreamOption | null>(null);
   const [savingToCatalog, setSavingToCatalog] = useState(false);
   const [savedMovie, setSavedMovie] = useState<Movie | null>(null);
   const [savedSuccess, setSavedSuccess] = useState<string | null>(null);
-  const [trailerOpen, setTrailerOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
+
+  // Google Drive Direto (Arquivo ou Pasta)
+  const [driveUrl, setDriveUrl] = useState("");
+  const [driveCustomTitle, setDriveCustomTitle] = useState("");
+  const [inspectingDrive, setInspectingDrive] = useState(false);
+  const [importingDrive, setImportingDrive] = useState(false);
+  const [driveInspected, setDriveInspected] = useState<GoogleDriveInspectResponse | null>(null);
+  const [previewDriveFile, setPreviewDriveFile] = useState<GoogleDriveFileItem | null>(null);
 
   // Debrid & Stream Direto
   const [debridToken, setDebridToken] = useState<string>("");
   const [resolvingDebrid, setResolvingDebrid] = useState<string | null>(null);
-  const [debridStreamUrl, setDebridStreamUrl] = useState<string | null>(null);
 
   // Gerenciador de Downloads (yt-dlp)
   const [downloadUrl, setDownloadUrl] = useState("");
@@ -80,7 +90,6 @@ export function AiMovieFinderModal({
     series: number;
   } | null>(null);
 
-  // Carrega token Debrid do LocalStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       const savedToken = localStorage.getItem("silvaflix_debrid_token");
@@ -118,46 +127,66 @@ export function AiMovieFinderModal({
 
   if (!isOpen) return null;
 
-  async function handleSearch(searchQuery?: string) {
-    const q = searchQuery || query;
-    if (!q.trim() || !token) return;
+  async function handleSearch(
+    searchQuery?: string,
+    tmdbIdOverride?: number,
+    mediaTypeOverride?: string
+  ) {
+    const q = (searchQuery ?? query).trim();
+    if (!q || !token) return;
+
+    // Se o usuário colou um link do Google Drive direto na barra de busca, redireciona para a aba do Drive!
+    if (q.includes("drive.google.com")) {
+      setDriveUrl(q);
+      setActiveTab("gdrive");
+      handleInspectDrive(q);
+      return;
+    }
 
     setError(null);
-    setAiResult(null);
-    setTorrentResult(null);
     setActivePlayer(null);
     setSavedMovie(null);
     setSavedSuccess(null);
-    setDebridStreamUrl(null);
     setSearching(true);
     setSearchStage(1);
 
-    const timer1 = setTimeout(() => setSearchStage(2), 400);
-    const timer2 = setTimeout(() => setSearchStage(3), 900);
+    const timer1 = setTimeout(() => setSearchStage(2), 350);
+    const timer2 = setTimeout(() => setSearchStage(3), 800);
 
     try {
-      // 1. Busca Paralela: Torrents BR / Torrentio + Servidores Web com IA
-      const [torrentData, aiData] = await Promise.allSettled([
-        api.searchTorrents(q.trim(), token),
-        api.aiSearchMovie({ query: q.trim() }, token),
+      const [aiData, torrentData] = await Promise.allSettled([
+        api.aiSearchMovie(
+          {
+            query: q,
+            tmdb_id: tmdbIdOverride,
+            media_type: mediaTypeOverride,
+          },
+          token
+        ),
+        api.searchTorrents(q, token),
       ]);
 
       setSearchStage(4);
+
+      if (aiData.status === "fulfilled" && aiData.value.found) {
+        setAiResult(aiData.value);
+        if (aiData.value.candidates && aiData.value.candidates.length > 0) {
+          setCandidatesList(aiData.value.candidates);
+        }
+        const driveOrDubbed =
+          aiData.value.providers.find((p) => p.stream_type === "drive") ||
+          aiData.value.providers.find((p) => p.is_dubbed);
+        const best = driveOrDubbed || aiData.value.best_provider || aiData.value.providers[0];
+        if (best) setActivePlayer(best);
+      }
 
       if (torrentData.status === "fulfilled" && torrentData.value.found) {
         setTorrentResult(torrentData.value);
       }
 
-      if (aiData.status === "fulfilled" && aiData.value.found) {
-        setAiResult(aiData.value);
-        const dubbed = aiData.value.providers.find((p) => p.is_dubbed);
-        const best = dubbed || aiData.value.best_provider || aiData.value.providers[0];
-        if (best) setActivePlayer(best);
-      }
-
       if (
-        (torrentData.status === "rejected" || !torrentData.value?.found) &&
-        (aiData.status === "rejected" || !aiData.value?.found)
+        (aiData.status === "rejected" || !aiData.value?.found) &&
+        (torrentData.status === "rejected" || !torrentData.value?.found)
       ) {
         setError(`Nenhum filme ou série encontrado para "${q}". Tente outro nome.`);
       }
@@ -168,6 +197,67 @@ export function AiMovieFinderModal({
       clearTimeout(timer1);
       clearTimeout(timer2);
       setSearching(false);
+    }
+  }
+
+  async function handleInspectDrive(customUrl?: string) {
+    const targetUrl = (customUrl ?? driveUrl).trim();
+    if (!targetUrl || !token) return;
+
+    setError(null);
+    setDriveInspected(null);
+    setPreviewDriveFile(null);
+    setInspectingDrive(true);
+
+    try {
+      const res = await api.inspectGoogleDrive(targetUrl, token);
+      setDriveInspected(res);
+      if (res.files && res.files.length > 0) {
+        setPreviewDriveFile(res.files[0]);
+      }
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível ler este link do Google Drive. Verifique se está público ('Qualquer pessoa com o link')."
+      );
+    } finally {
+      setInspectingDrive(false);
+    }
+  }
+
+  async function handleImportDrive(watchImmediately = false) {
+    if (!driveUrl.trim() || !token) return;
+    setError(null);
+    setImportingDrive(true);
+    try {
+      const res = await api.importGoogleDrive(
+        {
+          url: driveUrl.trim(),
+          title: driveCustomTitle.trim() || undefined,
+          fetch_tmdb: true,
+          is_private: false,
+        },
+        token
+      );
+      if (onMovieAdded) onMovieAdded();
+
+      if (watchImmediately && res.movies.length > 0) {
+        onClose();
+        router.push(`/watch/${res.movies[0].id}`);
+        return;
+      }
+
+      setSavedMovie(res.movies[0] || null);
+      setSavedSuccess(
+        res.added > 1
+          ? `🎉 Pasta importada! ${res.added} filmes do Google Drive foram adicionados ao catálogo com capas do TMDB!`
+          : `🎉 "${res.movies[0]?.title || "Filme"}" do Google Drive foi adicionado ao catálogo!`
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro ao importar do Google Drive.");
+    } finally {
+      setImportingDrive(false);
     }
   }
 
@@ -201,8 +291,6 @@ export function AiMovieFinderModal({
     try {
       const res = await api.resolveTorrentStream(magnet, token, debridToken);
       if (res.stream_url && res.player_type === "direct") {
-        setDebridStreamUrl(res.stream_url);
-        // Cadastra e abre no player
         if (currentMetadata) {
           const created = await api.aiImportStream(
             {
@@ -218,28 +306,21 @@ export function AiMovieFinderModal({
           router.push(`/watch/${created.id}`);
         }
       } else {
-        // Copia o magnet para o clipboard e orienta o usuário
-        if (navigator?.clipboard) {
-          await navigator.clipboard.writeText(magnet);
-        }
-        setSavedSuccess("📋 Link Magnet copiado! Cole no seu qBittorrent/Stremio ou use a aba '🛡️ Servidores Web Blindados' para assistir no navegador sem baixar.");
-        try {
-          window.location.href = magnet;
-        } catch {
-          // Ignora se o navegador não tiver cliente torrent instalado
-        }
+        window.location.href = magnet;
       }
     } catch {
-      if (navigator?.clipboard) {
-        navigator.clipboard.writeText(magnet);
-      }
-      setSavedSuccess("📋 Link Magnet copiado! Cole no seu qBittorrent/Stremio para baixar.");
+      window.location.href = magnet;
     } finally {
       setResolvingDebrid(null);
     }
   }
 
-  async function handleSaveExternalToCatalog(streamUrl: string, providerName: string, metadata: AIMetadata) {
+  async function handleSaveExternalToCatalog(
+    streamUrl: string,
+    providerName: string,
+    metadata: AIMetadata,
+    watchAfterSave = false
+  ) {
     if (!token) return;
     setSavingToCatalog(true);
     setSavedSuccess(null);
@@ -256,6 +337,10 @@ export function AiMovieFinderModal({
       setSavedMovie(created);
       setSavedSuccess(`"${created.title}" foi adicionado com sucesso ao seu catálogo!`);
       if (onMovieAdded) onMovieAdded();
+      if (watchAfterSave) {
+        onClose();
+        router.push(`/watch/${created.id}`);
+      }
     } catch (err: unknown) {
       alert("Erro ao salvar no catálogo: " + (err instanceof Error ? err.message : "Erro desconhecido"));
     } finally {
@@ -269,14 +354,12 @@ export function AiMovieFinderModal({
     setVodResult(null);
 
     try {
-      // 1. Faz o parse do M3U
       const parsed = await api.parseMovieM3U({ url: vodInputUrl, content: vodInputContent }, token);
       if (!parsed.items || parsed.items.length === 0) {
         alert("Nenhum item válido encontrado na lista M3U.");
         return;
       }
 
-      // 2. Executa a importação inteligente com verificação de links vivos
       const importRes = await api.smartVodImport(
         {
           items: parsed.items,
@@ -315,7 +398,7 @@ export function AiMovieFinderModal({
   }
 
   const currentMetadata: AIMetadata | null =
-    torrentResult?.metadata || aiResult?.metadata || null;
+    aiResult?.metadata || torrentResult?.metadata || null;
 
   return (
     <div
@@ -336,11 +419,11 @@ export function AiMovieFinderModal({
               <h2 className="text-base sm:text-lg font-black tracking-wide text-ink flex items-center gap-2">
                 <span>SilvaFlix MegaHub</span>
                 <span className="rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-bold text-brand2 uppercase">
-                  Torrents · Downloads · VOD · Web
+                  Players PT-BR · Google Drive · Torrents · Downloads
                 </span>
               </h2>
               <p className="text-xs text-mute hidden sm:block">
-                Pesquise qualquer filme ou série com áudio dublado (PT-BR), baixe para o servidor ou transmita direto.
+                Encontre qualquer filme dublado, importe links ou pastas inteiras do Google Drive e assista na hora.
               </p>
             </div>
           </div>
@@ -356,6 +439,35 @@ export function AiMovieFinderModal({
         {/* Abas de Navegação */}
         <div className="flex items-center border-b border-rule bg-panel px-4 overflow-x-auto">
           <button
+            onClick={() => setActiveTab("web_streams")}
+            className={`flex items-center gap-2 border-b-2 py-3 px-3 text-xs font-bold whitespace-nowrap transition-all ${
+              activeTab === "web_streams"
+                ? "border-brand text-ink"
+                : "border-transparent text-mute hover:text-ink"
+            }`}
+          >
+            <span>🎬</span>
+            <span>Assistir & Salvar (Dublado PT-BR)</span>
+            {aiResult && (
+              <span className="rounded-full bg-emerald-500/20 text-emerald-400 px-1.5 py-0.2 text-[10px]">
+                {aiResult.providers.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab("gdrive")}
+            className={`flex items-center gap-2 border-b-2 py-3 px-3 text-xs font-bold whitespace-nowrap transition-all ${
+              activeTab === "gdrive"
+                ? "border-brand text-ink"
+                : "border-transparent text-mute hover:text-ink"
+            }`}
+          >
+            <span>☁️</span>
+            <span>Google Drive (Links & Pastas)</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab("torrents")}
             className={`flex items-center gap-2 border-b-2 py-3 px-3 text-xs font-bold whitespace-nowrap transition-all ${
               activeTab === "torrents"
@@ -364,7 +476,7 @@ export function AiMovieFinderModal({
             }`}
           >
             <span>⚡</span>
-            <span>Torrents & Stream Direto</span>
+            <span>Torrents & Real-Debrid</span>
             {torrentResult && (
               <span className="rounded-full bg-emerald-500/20 text-emerald-400 px-1.5 py-0.2 text-[10px]">
                 {torrentResult.torrents.length}
@@ -381,7 +493,7 @@ export function AiMovieFinderModal({
             }`}
           >
             <span>📥</span>
-            <span>Baixar para o Servidor (yt-dlp)</span>
+            <span>Baixar no Servidor</span>
             {activeDownloads.length > 0 && (
               <span className="rounded-full bg-brand text-white px-1.5 py-0.2 text-[10px] animate-pulse">
                 {activeDownloads.filter((d) => d.status === "downloading").length || activeDownloads.length}
@@ -398,26 +510,14 @@ export function AiMovieFinderModal({
             }`}
           >
             <span>📂</span>
-            <span>Importador VOD Inteligente</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("web_streams")}
-            className={`flex items-center gap-2 border-b-2 py-3 px-3 text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === "web_streams"
-                ? "border-brand text-ink"
-                : "border-transparent text-mute hover:text-ink"
-            }`}
-          >
-            <span>🛡️</span>
-            <span>Servidores Web Blindados</span>
+            <span>Listas M3U / VOD</span>
           </button>
         </div>
 
         {/* Conteúdo com Scroll */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-          {/* Barra de Pesquisa Geral (válida para Torrents e Web) */}
-          {(activeTab === "torrents" || activeTab === "web_streams") && (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+          {/* Barra de Pesquisa Geral (válida para Players e Torrents) */}
+          {(activeTab === "web_streams" || activeTab === "torrents") && (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -430,7 +530,7 @@ export function AiMovieFinderModal({
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Digite o filme ou série (Ex: Harry Potter 1, Vingadores Ultimato, Interestelar...)"
+                  placeholder="Digite o nome do filme, franquia ou cole um link do Google Drive..."
                   disabled={searching}
                   className="w-full rounded-xl border border-rule bg-panel2/80 py-3.5 pl-4 pr-32 text-sm text-ink placeholder:text-mute focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 transition-all shadow-inner"
                 />
@@ -456,7 +556,7 @@ export function AiMovieFinderModal({
 
               {/* Sugestões Rápidas */}
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                <span className="text-[11px] font-semibold text-mute mr-1">Sugestões:</span>
+                <span className="text-[11px] font-semibold text-mute mr-1">Populares:</span>
                 {QUICK_SUGGESTIONS.map((item) => (
                   <button
                     key={item}
@@ -484,10 +584,10 @@ export function AiMovieFinderModal({
                 <div>
                   <p className="text-sm font-bold text-ink">Buscando em Múltiplos Motores:</p>
                   <p className="text-xs text-brand2 font-semibold">
-                    {searchStage === 1 && "🧠 1/3 Identificando filme oficial no TMDB e baixando sinopse..."}
-                    {searchStage === 2 && "🇧🇷 2/3 Vasculhando indexadores de Torrents Dublados (PT-BR) e servidores..."}
-                    {searchStage === 3 && "⚡ 3/3 Medindo seeders e latência dos streams..."}
-                    {searchStage === 4 && "✅ 4/3 Pronto! Versões em alta velocidade encontradas!"}
+                    {searchStage === 1 && "🧠 1/3 Identificando todos os filmes da franquia no TMDB..."}
+                    {searchStage === 2 && "☁️ 2/3 Vasculhando Google Drive, SuperFlix BR, WarezCDN e servidores PT-BR..."}
+                    {searchStage === 3 && "⚡ 3/3 Testando conexão dos players e links diretos..."}
+                    {searchStage === 4 && "✅ Pronto! Filmes e servidores encontrados!"}
                   </p>
                 </div>
               </div>
@@ -512,22 +612,80 @@ export function AiMovieFinderModal({
 
           {/* Feedback de Sucesso */}
           {savedSuccess && (
-            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-300 flex items-center justify-between gap-3 shadow-lg">
+            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-300 flex flex-wrap items-center justify-between gap-3 shadow-lg">
               <div className="flex items-center gap-3">
                 <span className="text-2xl">🎉</span>
                 <p className="font-bold text-sm text-emerald-400">{savedSuccess}</p>
               </div>
-              <button
-                onClick={() => setSavedSuccess(null)}
-                className="text-emerald-400 hover:text-white"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {savedMovie && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      router.push(`/watch/${savedMovie.id}`);
+                    }}
+                    className="rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-black text-white shadow hover:bg-emerald-400 transition-all"
+                  >
+                    ▶ Assistir Agora
+                  </button>
+                )}
+                <button
+                  onClick={() => setSavedSuccess(null)}
+                  className="text-emerald-400 hover:text-white px-2"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Card de Metadados do Filme (TMDB) quando encontrado */}
-          {currentMetadata && (
+          {/* SELETOR DE FILMES CANDIDATOS (Para escolher o filme exato de uma franquia!) */}
+          {(activeTab === "web_streams" || activeTab === "torrents") && candidatesList.length > 1 && (
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-mute">
+                🎯 Resultados encontrados no TMDB ({candidatesList.length} opções — clique para trocar de filme):
+              </p>
+              <div className="flex gap-2.5 overflow-x-auto pb-2">
+                {candidatesList.map((cand) => {
+                  const isSelected = currentMetadata?.tmdb_id === cand.tmdb_id;
+                  return (
+                    <button
+                      key={`${cand.media_type}-${cand.tmdb_id}`}
+                      type="button"
+                      onClick={() => handleSearch(cand.title, cand.tmdb_id, cand.media_type)}
+                      className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all flex-shrink-0 w-60 ${
+                        isSelected
+                          ? "border-brand bg-brand/15 ring-1 ring-brand"
+                          : "border-rule bg-panel2/70 hover:border-brand/50"
+                      }`}
+                    >
+                      {cand.poster_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={cand.poster_url}
+                          alt={cand.title}
+                          className="h-14 w-10 rounded-lg object-cover flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="h-14 w-10 rounded-lg bg-panel flex items-center justify-center text-sm flex-shrink-0">
+                          🎬
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-ink truncate">{cand.title}</p>
+                        <p className="text-[10px] text-mute">
+                          {cand.year || "S/ Ano"} · {cand.is_series ? "Série" : "Filme"}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Card de Metadados do Filme Selecionado */}
+          {(activeTab === "web_streams" || activeTab === "torrents") && currentMetadata && (
             <div className="relative overflow-hidden rounded-2xl border border-rule bg-panel2 shadow-lg">
               {currentMetadata.backdrop_url && (
                 <div
@@ -535,29 +693,29 @@ export function AiMovieFinderModal({
                   style={{ backgroundImage: `url(${currentMetadata.backdrop_url})` }}
                 />
               )}
-              <div className="relative p-4 sm:p-5 flex flex-col sm:flex-row gap-4">
+              <div className="relative p-4 sm:p-5 flex flex-col sm:flex-row gap-4 items-center sm:items-start">
                 {currentMetadata.poster_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={currentMetadata.poster_url}
                     alt={currentMetadata.title}
-                    className="h-44 w-32 flex-shrink-0 rounded-xl object-cover shadow-xl border border-rule mx-auto sm:mx-0"
+                    className="h-40 w-28 flex-shrink-0 rounded-xl object-cover shadow-xl border border-rule"
                   />
                 ) : (
-                  <div className="flex h-44 w-32 flex-shrink-0 items-center justify-center rounded-xl bg-panel text-3xl text-mute border border-rule mx-auto sm:mx-0">
+                  <div className="flex h-40 w-28 flex-shrink-0 items-center justify-center rounded-xl bg-panel text-3xl text-mute border border-rule">
                     🎬
                   </div>
                 )}
-                <div className="flex-1 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xl font-black text-ink">{currentMetadata.title}</h3>
+                <div className="flex-1 space-y-2 text-center sm:text-left">
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                    <h3 className="text-lg sm:text-xl font-black text-ink">{currentMetadata.title}</h3>
                     {currentMetadata.year && (
                       <span className="rounded-full bg-panel border border-rule px-2.5 py-0.5 text-xs font-bold text-mute">
                         {currentMetadata.year}
                       </span>
                     )}
                     <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-xs font-bold text-emerald-400">
-                      🇧🇷 Dublado PT-BR
+                      🇧🇷 Dublado PT-BR Disponível
                     </span>
                   </div>
                   <p className="text-xs text-mute font-semibold">
@@ -572,17 +730,316 @@ export function AiMovieFinderModal({
                   <p className="text-xs text-ink/80 line-clamp-2 sm:line-clamp-3">
                     {currentMetadata.synopsis || "Sem sinopse disponível."}
                   </p>
+
+                  {activePlayer && (
+                    <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSaveExternalToCatalog(
+                            activePlayer.player_url,
+                            activePlayer.provider_name,
+                            currentMetadata,
+                            true
+                          )
+                        }
+                        disabled={savingToCatalog}
+                        className="rounded-xl bg-gradient-to-r from-brand to-rose-600 px-4 py-2 text-xs font-black text-white shadow-lg hover:scale-105 transition-all flex items-center gap-1.5"
+                      >
+                        <span>▶</span>
+                        <span>{savingToCatalog ? "Abrindo..." : "Salvar e Assistir em Tela Cheia"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSaveExternalToCatalog(
+                            activePlayer.player_url,
+                            activePlayer.provider_name,
+                            currentMetadata,
+                            false
+                          )
+                        }
+                        disabled={savingToCatalog}
+                        className="rounded-xl border border-rule bg-panel px-3.5 py-2 text-xs font-bold text-ink hover:border-brand transition-all"
+                      >
+                        ➕ Apenas Adicionar ao Catálogo
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {/* ========================================================= */}
-          {/* ABA 1: TORRENTS & STREAM DIRETO (STREMIO ENGINE)          */}
+          {/* ABA 1: ASSISTIR & SALVAR (SERVIDORES PT-BR + DRIVE)       */}
+          {/* ========================================================= */}
+          {activeTab === "web_streams" && aiResult && (
+            <div className="space-y-4">
+              {activePlayer && (
+                <div className="rounded-2xl border border-brand/30 bg-panel2 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <p className="text-xs font-bold text-ink">
+                        Player Ativo: <span className="text-brand2">{activePlayer.provider_name}</span>
+                      </p>
+                    </div>
+                    <span className="text-[11px] text-emerald-400 font-bold">
+                      {activePlayer.language} · {activePlayer.quality}
+                    </span>
+                  </div>
+
+                  <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black">
+                    <iframe
+                      key={activePlayer.player_url}
+                      src={activePlayer.player_url}
+                      title={aiResult.metadata.title}
+                      {...(!activePlayer.player_url.includes("drive.google.com")
+                        ? {
+                            sandbox: "allow-scripts allow-same-origin allow-forms allow-presentation",
+                            referrerPolicy: "no-referrer" as const,
+                          }
+                        : {})}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                      allowFullScreen
+                      className="h-full w-full border-0"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
+                  <span>🛡️ Escolha o Servidor (Dublados PT-BR, Google Drive & Multi-Áudio)</span>
+                  <span className="rounded-full bg-panel2 border border-rule px-2 py-0.2 text-[10px] font-bold text-ink">
+                    {aiResult.providers.length} servidores
+                  </span>
+                </h4>
+
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {aiResult.providers.map((opt, idx) => {
+                    const isSelected = activePlayer?.player_url === opt.player_url;
+                    const isDriveOpt = opt.stream_type === "drive" || opt.player_url.includes("drive.google.com");
+                    return (
+                      <div
+                        key={idx}
+                        className={`rounded-xl border p-3 flex flex-col justify-between transition-all ${
+                          isSelected
+                            ? "border-brand bg-brand/10 ring-1 ring-brand/40"
+                            : "border-rule bg-panel2/60 hover:border-brand/40"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-bold text-ink">{opt.provider_name}</p>
+                            {isDriveOpt && (
+                              <span className="rounded bg-blue-500/20 text-blue-400 px-1.5 py-0.2 text-[10px] font-bold">
+                                ☁️ Google Drive
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-emerald-400 font-bold mt-0.5">
+                            {opt.language} · {opt.quality}
+                          </p>
+                          {opt.description && (
+                            <p className="text-[10px] text-mute mt-1 line-clamp-1">{opt.description}</p>
+                          )}
+                        </div>
+                        <div className="mt-2.5 flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActivePlayer(opt)}
+                            className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${
+                              isSelected
+                                ? "bg-brand text-white"
+                                : "bg-panel border border-rule text-ink hover:border-brand"
+                            }`}
+                          >
+                            {isSelected ? "✓ Testando Aqui" : "Testar Player"}
+                          </button>
+                          {currentMetadata && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleSaveExternalToCatalog(
+                                  opt.player_url,
+                                  opt.provider_name,
+                                  currentMetadata,
+                                  true
+                                )
+                              }
+                              disabled={savingToCatalog}
+                              className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-500 transition-all"
+                            >
+                              ▶ Salvar e Assistir
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* ABA 2: GOOGLE DRIVE DIRETO (ARQUIVOS ÚNICOS & PASTAS)     */}
+          {/* ========================================================= */}
+          {activeTab === "gdrive" && (
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-blue-500/30 bg-panel2 p-5 space-y-4 shadow-md">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/20 border border-blue-500/40 text-blue-400 text-xl font-bold">
+                      ☁️
+                    </div>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-black text-ink">
+                        Importar Filme ou Pasta Inteira do Google Drive
+                      </h3>
+                      <p className="text-xs text-mute">
+                        Cole o link de um vídeo (`drive.google.com/file/d/...`) ou de uma pasta pública (`drive.google.com/drive/folders/...`). O SilvaFlix identifica o nome, baixa a capa oficial no TMDB e reproduz sem anúncios!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
+                  <input
+                    type="text"
+                    value={driveUrl}
+                    onChange={(e) => setDriveUrl(e.target.value)}
+                    placeholder="Cole o link do arquivo ou pasta do Google Drive aqui..."
+                    className="rounded-xl border border-rule bg-panel px-4 py-3 text-xs sm:text-sm text-ink focus:border-blue-400 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={driveCustomTitle}
+                    onChange={(e) => setDriveCustomTitle(e.target.value)}
+                    placeholder="Nome do filme (Opcional - auto detecta)"
+                    className="rounded-xl border border-rule bg-panel px-4 py-3 text-xs text-ink focus:border-blue-400 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <a
+                    href={`https://www.google.com/search?q=${encodeURIComponent(
+                      `site:drive.google.com/file/d "${query || driveCustomTitle || "dublado"}"`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-xl border border-rule bg-panel px-3.5 py-2 text-xs font-bold text-blue-400 hover:border-blue-400 transition-all flex items-center gap-1.5"
+                  >
+                    <span>🔎</span>
+                    <span>Procurar Links de Filmes no Google Drive (Web)</span>
+                  </a>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleInspectDrive()}
+                      disabled={inspectingDrive || !driveUrl.trim()}
+                      className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 py-2.5 text-xs font-bold text-blue-300 hover:bg-blue-500/20 transition-all disabled:opacity-50"
+                    >
+                      {inspectingDrive ? "Lendo Drive..." : "🔍 Analisar Link / Pasta"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleImportDrive(false)}
+                      disabled={importingDrive || !driveUrl.trim()}
+                      className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-black text-white shadow hover:bg-blue-500 transition-all disabled:opacity-50"
+                    >
+                      {importingDrive ? "Importando..." : "➕ Salvar no Catálogo"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleImportDrive(true)}
+                      disabled={importingDrive || !driveUrl.trim()}
+                      className="rounded-xl bg-gradient-to-r from-brand to-rose-600 px-5 py-2.5 text-xs font-black text-white shadow-md hover:scale-105 transition-all disabled:opacity-50"
+                    >
+                      ▶ Importar e Assistir Agora
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resultado da Inspeção do Google Drive */}
+              {driveInspected && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
+                      <span>
+                        {driveInspected.is_folder
+                          ? `📂 Pasta Detectada: ${driveInspected.folder_title || "Google Drive"}`
+                          : "🎬 Arquivo do Google Drive Detectado"}
+                      </span>
+                      <span className="rounded-full bg-blue-500/20 text-blue-400 px-2 py-0.5 text-[10px] font-bold">
+                        {driveInspected.total} vídeo(s)
+                      </span>
+                    </h4>
+                  </div>
+
+                  {previewDriveFile && (
+                    <div className="rounded-2xl border border-blue-500/30 bg-panel2 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-bold text-ink truncate">
+                          Pré-visualização Direta:{" "}
+                          <span className="text-blue-400">{previewDriveFile.clean_title}</span>
+                          {previewDriveFile.year ? ` (${previewDriveFile.year})` : ""}
+                        </p>
+                      </div>
+                      <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black">
+                        <iframe
+                          key={previewDriveFile.preview_url}
+                          src={previewDriveFile.preview_url}
+                          title={previewDriveFile.title}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                          allowFullScreen
+                          className="h-full w-full border-0"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {driveInspected.files.map((f) => (
+                      <div
+                        key={f.file_id}
+                        className={`rounded-xl border p-3 flex items-center justify-between gap-2 ${
+                          previewDriveFile?.file_id === f.file_id
+                            ? "border-blue-400 bg-blue-500/10"
+                            : "border-rule bg-panel2/60"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-ink truncate">{f.clean_title}</p>
+                          <p className="text-[10px] text-mute truncate">Arquivo: {f.title}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewDriveFile(f)}
+                          className="rounded-lg border border-rule bg-panel px-2.5 py-1 text-xs font-bold text-ink hover:border-blue-400"
+                        >
+                          ▶ Testar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* ABA 3: TORRENTS & STREAM DIRETO (STREMIO ENGINE)          */}
           {/* ========================================================= */}
           {activeTab === "torrents" && (
             <div className="space-y-4">
-              {/* Box de Configuração Opcional de Debrid */}
               <div className="rounded-xl border border-rule bg-panel p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">🔑</span>
@@ -602,7 +1059,6 @@ export function AiMovieFinderModal({
                 />
               </div>
 
-              {/* Lista de Torrents Encontrados */}
               {torrentResult && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -653,7 +1109,6 @@ export function AiMovieFinderModal({
                           </p>
                         </div>
 
-                        {/* Botões de Ação do Torrent */}
                         <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
                           <button
                             type="button"
@@ -662,7 +1117,7 @@ export function AiMovieFinderModal({
                             className="rounded-lg bg-gradient-to-r from-brand to-rose-600 px-3.5 py-1.5 text-xs font-black text-white shadow hover:scale-105 transition-all flex items-center gap-1.5"
                           >
                             <span>▶</span>
-                            <span>{resolvingDebrid === tor.magnet ? "Resolvendo..." : "Assistir Agora (Stream)"}</span>
+                            <span>{resolvingDebrid === tor.magnet ? "Resolvendo..." : "Abrir Stream / Torrent"}</span>
                           </button>
 
                           <button
@@ -673,23 +1128,6 @@ export function AiMovieFinderModal({
                             <span>{copiedLink === tor.info_hash ? "✓" : "📋"}</span>
                             <span>{copiedLink === tor.info_hash ? "Copiado!" : "Magnet"}</span>
                           </button>
-
-                          {currentMetadata && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleSaveExternalToCatalog(
-                                  tor.magnet,
-                                  `Torrent (${tor.provider} ${tor.quality})`,
-                                  currentMetadata
-                                )
-                              }
-                              disabled={savingToCatalog}
-                              className="rounded-lg border border-rule bg-panel px-2.5 py-1.5 text-xs font-bold text-mute hover:border-brand hover:text-ink transition-all"
-                            >
-                              ➕ Salvar
-                            </button>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -700,20 +1138,19 @@ export function AiMovieFinderModal({
           )}
 
           {/* ========================================================= */}
-          {/* ABA 2: GERENCIADOR DE DOWNLOADS (yt-dlp)                  */}
+          {/* ABA 4: GERENCIADOR DE DOWNLOADS (yt-dlp)                  */}
           {/* ========================================================= */}
           {activeTab === "downloader" && (
             <div className="space-y-6">
-              {/* Formulário de Novo Download */}
               <div className="rounded-2xl border border-rule bg-panel2 p-5 space-y-4 shadow-md">
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white text-base font-bold">
                     ⬇
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-ink">Baixar Vídeo Diretamente para o Servidor Local</h3>
+                    <h3 className="text-sm font-bold text-ink">Baixar Vídeo Diretamente para o HD do Servidor</h3>
                     <p className="text-xs text-mute">
-                      Suporta YouTube, Dailymotion, Vimeo, Google Drive, arquivos MP4/MKV e listas HLS (.m3u8).
+                      Suporta YouTube, Google Drive, Dailymotion, Vimeo, arquivos MP4/MKV e listas HLS (.m3u8).
                     </p>
                   </div>
                 </div>
@@ -723,7 +1160,7 @@ export function AiMovieFinderModal({
                     type="text"
                     value={downloadUrl}
                     onChange={(e) => setDownloadUrl(e.target.value)}
-                    placeholder="Cole a URL do vídeo aqui (Ex: https://.../video.mp4 ou link do YouTube)..."
+                    placeholder="Cole a URL do vídeo aqui (Ex: link do Google Drive, YouTube ou .mp4)..."
                     className="rounded-xl border border-rule bg-panel px-4 py-2.5 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                   <input
@@ -748,7 +1185,6 @@ export function AiMovieFinderModal({
                 </div>
               </div>
 
-              {/* Lista de Downloads Ativos */}
               <div className="space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
                   <span>📊 Downloads Ativos & Concluídos</span>
@@ -786,7 +1222,6 @@ export function AiMovieFinderModal({
                           </span>
                         </div>
 
-                        {/* Barra de Progresso */}
                         <div className="h-2 w-full overflow-hidden rounded-full bg-panel2">
                           <div
                             className={`h-full transition-all duration-300 ${
@@ -834,7 +1269,7 @@ export function AiMovieFinderModal({
           )}
 
           {/* ========================================================= */}
-          {/* ABA 3: IMPORTADOR VOD INTELIGENTE (FILTRO ANTI-LINKS MORTOS)*/}
+          {/* ABA 5: IMPORTADOR VOD INTELIGENTE                         */}
           {/* ========================================================= */}
           {activeTab === "smart_vod" && (
             <div className="space-y-5">
@@ -844,9 +1279,9 @@ export function AiMovieFinderModal({
                     🛡️
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-ink">Importador com Teste Automático de Conexão</h3>
+                    <h3 className="text-sm font-bold text-ink">Importador M3U com Teste Automático de Conexão</h3>
                     <p className="text-xs text-mute">
-                      Testa 30 links por segundo, descarta 100% dos links quebrados/mortos e separa séries de filmes automaticamente.
+                      Testa 30 links por segundo, descarta links quebrados e separa séries de filmes automaticamente.
                     </p>
                   </div>
                 </div>
@@ -888,7 +1323,6 @@ export function AiMovieFinderModal({
                 </div>
               </div>
 
-              {/* Resultado do VOD Import */}
               {vodResult && (
                 <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5 space-y-2 text-xs text-emerald-300">
                   <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
@@ -917,93 +1351,13 @@ export function AiMovieFinderModal({
               )}
             </div>
           )}
-
-          {/* ========================================================= */}
-          {/* ABA 4: SERVIDORES WEB BLINDADOS (EMBED ANTI-POPUP)        */}
-          {/* ========================================================= */}
-          {activeTab === "web_streams" && aiResult && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-mute flex items-center gap-2">
-                  <span>🛡️ Servidores Web Blindados contra Anúncios</span>
-                  <span className="rounded-full bg-panel2 border border-rule px-2 py-0.2 text-[10px] font-bold text-ink">
-                    {aiResult.providers.length}
-                  </span>
-                </h4>
-              </div>
-
-              {activePlayer && (
-                <div className="rounded-2xl border border-brand/30 bg-panel2 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                      <p className="text-xs font-bold text-ink">
-                        Servidor Ativo: <span className="text-brand2">{activePlayer.provider_name}</span>
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        currentMetadata &&
-                        handleSaveExternalToCatalog(activePlayer.player_url, activePlayer.provider_name, currentMetadata)
-                      }
-                      disabled={savingToCatalog}
-                      className="rounded-lg bg-brand px-3.5 py-1.5 text-xs font-bold text-white hover:bg-brand2"
-                    >
-                      {savingToCatalog ? "Salvando..." : "➕ Salvar no Catálogo"}
-                    </button>
-                  </div>
-
-                  <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-rule bg-black">
-                    <iframe
-                      key={activePlayer.player_url}
-                      src={activePlayer.player_url}
-                      title={aiResult.metadata.title}
-                      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                      referrerPolicy="no-referrer"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                      allowFullScreen
-                      className="h-full w-full border-0"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                {aiResult.providers.map((opt, idx) => (
-                  <div
-                    key={idx}
-                    className={`rounded-xl border p-3 flex flex-col justify-between ${
-                      activePlayer?.player_url === opt.player_url
-                        ? "border-brand bg-brand/10"
-                        : "border-rule bg-panel2/60"
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-ink">{opt.provider_name}</p>
-                      <p className="text-[11px] text-emerald-400 font-bold">{opt.language} · {opt.quality}</p>
-                    </div>
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setActivePlayer(opt)}
-                        className="rounded bg-panel border border-rule px-2.5 py-1 text-xs font-bold hover:border-brand"
-                      >
-                        Selecionar
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Rodapé */}
         <div className="flex items-center justify-between border-t border-rule bg-panel2/60 px-5 py-3 text-xs text-mute">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            <span>SilvaFlix MegaHub — 4 Motores de Alta Velocidade</span>
+            <span>SilvaFlix MegaHub — Servidores PT-BR · Google Drive · Torrents · Downloads</span>
           </span>
           <button
             onClick={onClose}

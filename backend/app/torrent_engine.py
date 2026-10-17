@@ -129,6 +129,7 @@ async def search_torrents_for_media(
     Retorna a lista completa com prioridade para versões Dubladas PT-BR com mais seeders.
     """
     metadata = await search_canonical_tmdb(query=query, year=year)
+    metadata.pop("_candidates", None)
     imdb_id = metadata.get("imdb_id")
     is_series = metadata.get("is_series", False)
     season = metadata.get("season_number", 1) or 1

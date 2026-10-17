@@ -340,6 +340,8 @@ class DeleteByCategoryRequest(BaseModel):
 class AISearchRequest(BaseModel):
     query: str
     year: Optional[int] = None
+    tmdb_id: Optional[int] = None
+    media_type: Optional[str] = None
 
 
 class AIStreamOption(BaseModel):
@@ -355,8 +357,6 @@ class AIStreamOption(BaseModel):
     latency_ms: Optional[int] = None
     status: Optional[str] = "online"
     working: Optional[bool] = True
-
-
 
 
 class AIMetadata(BaseModel):
@@ -384,6 +384,7 @@ class AISearchResultResponse(BaseModel):
     query: str
     found: bool
     metadata: AIMetadata
+    candidates: List[AIMetadata] = []
     providers: List[AIStreamOption]
     total_providers: int
     best_provider: Optional[AIStreamOption] = None
@@ -394,6 +395,43 @@ class AIImportStreamRequest(BaseModel):
     provider_name: str
     metadata: AIMetadata
     is_private: bool = False
+
+
+# --- Schemas para Integração Direta com Google Drive (Links & Pastas) ---
+
+class GoogleDriveInspectRequest(BaseModel):
+    url: str
+
+
+class GoogleDriveFileItem(BaseModel):
+    file_id: str
+    title: str
+    clean_title: str
+    year: Optional[int] = None
+    preview_url: str
+    view_url: str
+    download_url: str
+
+
+class GoogleDriveInspectResponse(BaseModel):
+    is_folder: bool
+    folder_title: Optional[str] = None
+    files: List[GoogleDriveFileItem]
+    total: int
+
+
+class GoogleDriveImportRequest(BaseModel):
+    url: str
+    title: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    fetch_tmdb: bool = True
+    is_private: bool = False
+
+
+class GoogleDriveImportResponse(BaseModel):
+    total_found: int
+    added: int
+    movies: List[MovieOut]
 
 
 # --- Schemas para Torrents & Stream Sequencial (Stremio Engine) ---
@@ -476,4 +514,5 @@ class SmartVODImportResponse(BaseModel):
     movies_added: int
     series_episodes_added: int
     results: List[dict]
+
 

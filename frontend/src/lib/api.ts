@@ -265,6 +265,7 @@ export interface AISearchResultResponse {
   query: string;
   found: boolean;
   metadata: AIMetadata;
+  candidates?: AIMetadata[];
   providers: AIStreamOption[];
   total_providers: number;
   best_provider?: AIStreamOption | null;
@@ -275,6 +276,29 @@ export interface AIImportStreamRequest {
   provider_name: string;
   metadata: AIMetadata;
   is_private?: boolean;
+}
+
+export interface GoogleDriveFileItem {
+  file_id: string;
+  title: string;
+  clean_title: string;
+  year?: number | null;
+  preview_url: string;
+  view_url: string;
+  download_url: string;
+}
+
+export interface GoogleDriveInspectResponse {
+  is_folder: boolean;
+  folder_title?: string | null;
+  files: GoogleDriveFileItem[];
+  total: number;
+}
+
+export interface GoogleDriveImportResponse {
+  total_found: number;
+  added: number;
+  movies: Movie[];
 }
 
 export interface TorrentStreamOption {
@@ -983,8 +1007,11 @@ export const api = {
       token
     ),
 
-  // --- SilvaFlix IA (Buscador Inteligente de Filmes & Séries na Web) ---
-  aiSearchMovie: (payload: { query: string; year?: number }, token: string) =>
+  // --- SilvaFlix IA & Google Drive (Buscador Inteligente de Filmes & Séries na Web) ---
+  aiSearchMovie: (
+    payload: { query: string; year?: number; tmdb_id?: number; media_type?: string },
+    token: string
+  ) =>
     request<AISearchResultResponse>(
       "/ai/search-movie",
       { method: "POST", body: JSON.stringify(payload) },
@@ -994,6 +1021,29 @@ export const api = {
   aiImportStream: (payload: AIImportStreamRequest, token: string) =>
     request<Movie>(
       "/ai/import-stream",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+
+  inspectGoogleDrive: (url: string, token: string) =>
+    request<GoogleDriveInspectResponse>(
+      "/ai/drive/inspect",
+      { method: "POST", body: JSON.stringify({ url }) },
+      token
+    ),
+
+  importGoogleDrive: (
+    payload: {
+      url: string;
+      title?: string;
+      tmdb_id?: number;
+      fetch_tmdb?: boolean;
+      is_private?: boolean;
+    },
+    token: string
+  ) =>
+    request<GoogleDriveImportResponse>(
+      "/ai/drive/import",
       { method: "POST", body: JSON.stringify(payload) },
       token
     ),

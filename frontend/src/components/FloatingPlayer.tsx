@@ -27,12 +27,14 @@ export function FloatingPlayer() {
     }
 
     const onTimeUpdate = () => {
-      setFloatingTime(video.currentTime);
       setProgress(movie.id, video.currentTime, video.duration);
     };
 
     const onPlay = () => setFloatingPlaying(true);
-    const onPause = () => setFloatingPlaying(false);
+    const onPause = () => {
+      setFloatingPlaying(false);
+      setFloatingTime(video.currentTime);
+    };
 
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("play", onPlay);
@@ -43,7 +45,7 @@ export function FloatingPlayer() {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
     };
-  }, [movie]);
+  }, [movie, setFloatingPlaying, setFloatingTime]);
 
   if (!state.isVisible || !movie || isCurrentWatchPage || !token) {
     return null;

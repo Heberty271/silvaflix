@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, tmdb
-from ..ai_finder import ai_find_movie
+from ..ai_finder import ai_find_movie, clean_messy_title, inspect_google_drive_url, extract_drive_id_and_type
 from ..torrent_engine import search_torrents_for_media, resolve_debrid_link
 from ..downloader import start_background_download, list_active_downloads, cancel_download
 from ..vod_scanner import scan_and_import_smart_vod
@@ -59,7 +59,7 @@ def parse_series_info(filename: str) -> dict:
         season = int(match_s_e.group(1))
         episode = int(match_s_e.group(2))
         series_name = basename[: match_s_e.start()]
-        series_clean = re.sub(r"[\._\-]", " ", series_name).strip()
+        series_clean, _ = clean_messy_title(series_name)
         return {
             "is_series": True,
             "series_title": series_clean or basename,
@@ -72,7 +72,7 @@ def parse_series_info(filename: str) -> dict:
         season = int(match_nxn.group(1))
         episode = int(match_nxn.group(2))
         series_name = basename[: match_nxn.start()]
-        series_clean = re.sub(r"[\._\-]", " ", series_name).strip()
+        series_clean, _ = clean_messy_title(series_name)
         return {
             "is_series": True,
             "series_title": series_clean or basename,
@@ -86,27 +86,7 @@ def parse_series_info(filename: str) -> dict:
 def clean_filename_for_search(filename: str) -> tuple[str, Optional[int]]:
     """Extrai título limpo e ano de um arquivo de vídeo para consulta no TMDB."""
     basename = os.path.splitext(os.path.basename(filename))[0]
-
-    year_match = re.search(r"\b(19\d\d|20\d\d)\b", basename)
-    year = int(year_match.group(1)) if year_match else None
-
-    if year_match:
-        title_part = basename[: year_match.start()]
-    else:
-        title_part = basename
-
-    tags = [
-        r"1080p", r"720p", r"480p", r"2160p", r"4k", r"bluray", r"bdrip", r"dvdrip",
-        r"web-dl", r"webrip", r"h\.?264", r"x\.?264", r"h\.?265", r"x\.?265", r"hevc",
-        r"dual", r"dublado", r"legendado", r"aac", r"ac3", r"dts", r"yify", r"yts",
-        r"rarbg", r"imax", r"s\d{1,2}e\d{1,3}", r"\d{1,2}x\d{1,3}"
-    ]
-    for tag in tags:
-        title_part = re.sub(tag, "", title_part, flags=re.IGNORECASE)
-
-    title_clean = re.sub(r"[\._\-]", " ", title_part)
-    title_clean = re.sub(r"\s+", " ", title_clean).strip()
-    return title_clean or basename, year
+    return clean_messy_title(basename)
 
 
 @router.get("/movies", response_model=list[schemas.MovieOut])
@@ -302,7 +282,7 @@ def get_movie_subtitles(movie_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Nenhuma legenda local para stream externo")
 
     file_path = _resolve_media_path(movie.filename)
-    base_no_ext = os.path.splitext(movie_path)[0]
+    base_no_ext = os.path.splitext(file_path)[0]
 
     candidates = [
         base_no_ext + ".vtt",
@@ -827,10 +807,29 @@ async def create_movie_from_url(
     payload: schemas.MovieFromUrlCreate,
     db: Session = Depends(get_db),
 ):
-    """Cadastra um filme/episódio diretamente a partir de um link de vídeo externo (MP4, MKV, M3U8, etc.)."""
+    """Cadastra um filme/episódio diretamente a partir de um link de vídeo externo ou Google Drive."""
     video_url = payload.video_url.strip()
     if not video_url or not (video_url.startswith("http://") or video_url.startswith("https://")):
         raise HTTPException(status_code=400, detail="Informe uma URL de vídeo válida (iniciando com http:// ou https://)")
+
+    drive_id, drive_type = extract_drive_id_and_type(video_url)
+    source_name = payload.source_name or "Link Web"
+    title = payload.title
+    year = payload.year
+
+    if drive_id and drive_type == "file":
+        video_url = f"https://drive.google.com/file/d/{drive_id}/preview"
+        if source_name == "Link Web":
+            source_name = "Google Drive"
+        if not title:
+            try:
+                drive_info = await inspect_google_drive_url(video_url)
+                if drive_info.get("files"):
+                    f_item = drive_info["files"][0]
+                    title = f_item["clean_title"]
+                    year = year or f_item.get("year")
+            except Exception:
+                pass
 
     details = None
     if payload.tmdb_id:
@@ -838,9 +837,20 @@ async def create_movie_from_url(
             details = await tmdb.get_movie_details(payload.tmdb_id)
         except Exception:
             pass
+    elif title and TMDB_API_KEY:
+        try:
+            candidates = await tmdb.search_movies(title)
+            if candidates:
+                chosen = candidates[0]
+                if year:
+                    for c in candidates:
+                        if c.year and str(year) in c.year:
+                            chosen = c
+                            break
+                details = await tmdb.get_movie_details(chosen.tmdb_id)
+        except Exception:
+            pass
 
-    title = payload.title
-    year = payload.year
     synopsis = payload.synopsis or ""
     genre = payload.genre
     director = payload.director
@@ -852,7 +862,7 @@ async def create_movie_from_url(
     trailer_id = payload.trailer_youtube_id
 
     if details:
-        title = title or details["title"]
+        title = payload.title or details["title"]
         year = year or details["year"]
         synopsis = synopsis or details["synopsis"]
         genre = genre or details["genre"]
@@ -882,7 +892,7 @@ async def create_movie_from_url(
         filename=video_url,
         video_url=video_url,
         is_external=True,
-        source_name=payload.source_name or "Link Web",
+        source_name=source_name,
         is_private=payload.is_private,
         is_series=payload.is_series,
         series_title=payload.series_title,
@@ -1181,17 +1191,124 @@ def list_movie_sources(
     return sources
 
 
-# ---------------------- Rotas de IA (SilvaFlix IA Search & Crawler) ----------------------
+# ---------------------- Rotas de IA & Google Drive (SilvaFlix IA Search & Drive) ----------------------
 
 @router.post("/ai/search-movie", response_model=schemas.AISearchResultResponse)
 async def search_movie_with_ai(
     payload: schemas.AISearchRequest,
     current_user: models.User = Depends(get_current_user),
 ):
-    """Busca inteligente de filmes e séries na web com IA (TMDB + múltiplos players)."""
+    """Busca inteligente de filmes e séries na web com IA (TMDB + candidatos + Google Drive + players PT-BR)."""
     if not payload.query or not payload.query.strip():
         raise HTTPException(status_code=400, detail="Digite o nome de um filme ou série para buscar.")
-    return await ai_find_movie(query=payload.query, year=payload.year)
+    return await ai_find_movie(
+        query=payload.query,
+        year=payload.year,
+        tmdb_id=payload.tmdb_id,
+        media_type=payload.media_type,
+    )
+
+
+@router.post("/ai/drive/inspect", response_model=schemas.GoogleDriveInspectResponse)
+async def inspect_drive_link(
+    payload: schemas.GoogleDriveInspectRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Inspeciona um link de arquivo ou pasta pública do Google Drive e retorna todos os vídeos detectados."""
+    return await inspect_google_drive_url(payload.url)
+
+
+@router.post("/ai/drive/import", response_model=schemas.GoogleDriveImportResponse)
+async def import_drive_link_or_folder(
+    payload: schemas.GoogleDriveImportRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Importa diretamente um arquivo de vídeo do Google Drive ou TODOS os vídeos de uma pasta pública do Drive,
+    buscando capas, sinopses e fichas técnicas automaticamente no TMDB!
+    """
+    inspected = await inspect_google_drive_url(payload.url)
+    files = inspected.get("files", [])
+    created_movies: list[models.Movie] = []
+
+    for idx, f_item in enumerate(files):
+        raw_title = payload.title if (payload.title and len(files) == 1) else f_item["clean_title"]
+        year = f_item.get("year")
+        series_info = parse_series_info(f_item["title"])
+
+        details = None
+        if payload.tmdb_id and len(files) == 1:
+            try:
+                details = await tmdb.get_movie_details(payload.tmdb_id)
+            except Exception:
+                pass
+        elif payload.fetch_tmdb and TMDB_API_KEY and raw_title:
+            try:
+                candidates = await tmdb.search_movies(raw_title)
+                if candidates:
+                    chosen = candidates[0]
+                    if year:
+                        for c in candidates:
+                            if c.year and str(year) in c.year:
+                                chosen = c
+                                break
+                    details = await tmdb.get_movie_details(chosen.tmdb_id)
+            except Exception:
+                pass
+
+        title_final = (details.get("title") if details else None) or raw_title or f_item["title"]
+        if series_info.get("is_series") and details:
+            title_final = f"{details['title']} - T{series_info['season_number']}E{series_info['episode_number']}"
+
+        poster_url = details.get("poster_url") if details else None
+        backdrop_url = details.get("backdrop_url") if details else None
+
+        movie = models.Movie(
+            title=title_final,
+            synopsis=(details.get("synopsis") if details else "") or "",
+            year=(details.get("year") if details else None) or year,
+            genre=(details.get("genre") if details else None) or "Google Drive",
+            duration_minutes=details.get("duration_minutes") if details else None,
+            director=details.get("director") if details else None,
+            cast=details.get("cast") if details else None,
+            filename=f"gdrive_{f_item['file_id']}_{int(time.time())}_{idx}.mp4",
+            video_url=f_item["preview_url"],
+            is_external=True,
+            source_name="Google Drive",
+            thumbnail_filename=poster_url,
+            backdrop_filename=backdrop_url,
+            trailer_youtube_id=details.get("trailer_youtube_id") if details else None,
+            collection_name=details.get("collection_name") if details else None,
+            is_series=series_info.get("is_series", False),
+            series_title=series_info.get("series_title"),
+            season_number=series_info.get("season_number"),
+            episode_number=series_info.get("episode_number"),
+            is_private=payload.is_private if current_user.role == models.RoleEnum.admin else False,
+        )
+        db.add(movie)
+        db.commit()
+        db.refresh(movie)
+
+        if poster_url and poster_url.startswith("http") and os.path.isdir(MEDIA_THUMBS_DIR):
+            try:
+                img_data = await tmdb.download_poster(poster_url)
+                thumb_name = f"movie_{movie.id}.jpg"
+                with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
+                    f.write(img_data)
+                movie.thumbnail_filename = thumb_name
+                db.commit()
+                db.refresh(movie)
+            except Exception:
+                pass
+
+        created_movies.append(movie)
+
+    return {
+        "total_found": len(files),
+        "added": len(created_movies),
+        "movies": created_movies,
+    }
 
 
 @router.post("/ai/import-stream", response_model=schemas.MovieOut)
@@ -1202,6 +1319,10 @@ async def import_ai_stream(
 ):
     """Salva no catálogo do SilvaFlix o filme ou série encontrado pela IA com 1 clique."""
     meta = payload.metadata
+    player_url = payload.player_url.strip()
+    drive_id, drive_type = extract_drive_id_and_type(player_url)
+    if drive_id and drive_type == "file":
+        player_url = f"https://drive.google.com/file/d/{drive_id}/preview"
 
     movie = models.Movie(
         title=meta.title,
@@ -1212,9 +1333,9 @@ async def import_ai_stream(
         director=meta.director,
         cast=meta.cast,
         filename=f"ai_{meta.tmdb_id}_{int(time.time())}.mp4",
-        video_url=payload.player_url,
+        video_url=player_url,
         is_external=True,
-        source_name=f"SilvaFlix IA ({payload.provider_name})",
+        source_name="Google Drive" if "drive.google.com" in player_url else f"SilvaFlix IA ({payload.provider_name})",
         thumbnail_filename=meta.poster_url,
         backdrop_filename=meta.backdrop_url,
         trailer_youtube_id=meta.trailer_youtube_id,

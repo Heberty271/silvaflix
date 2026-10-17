@@ -20,6 +20,35 @@ function formatTime(seconds: number): string {
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+export function extractGoogleDriveFileId(url: string): string | null {
+  if (!url) return null;
+  const fileMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (fileMatch) return fileMatch[1];
+  const idMatch = url.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?[^#]*id=([a-zA-Z0-9_-]+)/i);
+  if (idMatch) return idMatch[1];
+  return null;
+}
+
+export function normalizeEmbedOrDriveUrl(url: string): {
+  isDrive: boolean;
+  normalizedUrl: string;
+  driveFileId: string | null;
+} {
+  const driveId = extractGoogleDriveFileId(url);
+  if (driveId) {
+    return {
+      isDrive: true,
+      normalizedUrl: `https://drive.google.com/file/d/${driveId}/preview`,
+      driveFileId: driveId,
+    };
+  }
+  return {
+    isDrive: url.includes("drive.google.com"),
+    normalizedUrl: url,
+    driveFileId: null,
+  };
+}
+
 function parseEmbedDetails(url: string, movie?: Movie): {
   tmdbId?: string;
   isSeries?: boolean;
@@ -32,21 +61,21 @@ function parseEmbedDetails(url: string, movie?: Movie): {
   let tmdbId: string | undefined;
 
   if (url) {
-    const tvMatch = url.match(/\/(?:tv|embed\/tv)\/(\d+)(?:\/(\d+))?(?:\/(\d+))?/i);
+    const tvMatch = url.match(/\/(?:tv|embed\/tv|serie)\/(\d+)(?:\/(\d+))?(?:\/(\d+))?/i);
     if (tvMatch) {
       tmdbId = tvMatch[1];
       isSeries = true;
       if (tvMatch[2]) season = parseInt(tvMatch[2], 10);
       if (tvMatch[3]) episode = parseInt(tvMatch[3], 10);
     } else {
-      const movieMatch = url.match(/\/(?:movie|embed\/movie)\/(\d+)/i);
+      const movieMatch = url.match(/\/(?:movie|embed\/movie|filme)\/(\d+)/i);
       if (movieMatch) {
         tmdbId = movieMatch[1];
       } else {
         const tmdbParamMatch = url.match(/[?&]tmdb(?:_id)?=(\d+)/i);
         if (tmdbParamMatch) {
           tmdbId = tmdbParamMatch[1];
-        } else {
+        } else if (!url.includes("drive.google.com")) {
           const anyNum = url.match(/\/(\d{3,8})/);
           if (anyNum) tmdbId = anyNum[1];
         }
@@ -58,16 +87,45 @@ function parseEmbedDetails(url: string, movie?: Movie): {
 }
 
 function getAvailableEmbedServers(activeUrl: string, movie?: Movie) {
+  const { isDrive, normalizedUrl } = normalizeEmbedOrDriveUrl(activeUrl);
   const { tmdbId, isSeries, season, episode } = parseEmbedDetails(activeUrl, movie);
-  if (!tmdbId) return [];
+
+  const servers: Array<{ name: string; desc: string; isDubbed: boolean; url: string }> = [];
+
+  if (isDrive) {
+    servers.push({
+      name: "Google Drive Player (Direto)",
+      desc: "Reprodução direta da nuvem do Google Drive (Sem Anúncios)",
+      isDubbed: true,
+      url: normalizedUrl,
+    });
+  }
+
+  if (!tmdbId) return servers;
 
   const s = season || 1;
   const e = episode || 1;
 
-  return [
+  servers.push(
+    {
+      name: "SuperFlix BR (Dublado PT-BR)",
+      desc: "Servidor Brasileiro · Áudio Dublado PT-BR & Legendado",
+      isDubbed: true,
+      url: isSeries
+        ? `https://superflixapi.dev/serie/${tmdbId}/${s}/${e}`
+        : `https://superflixapi.dev/filme/${tmdbId}`,
+    },
+    {
+      name: "WarezCDN Brasil (Dublado PT-BR)",
+      desc: "CDN Nacional Rápida · Dublado & Legendado PT-BR",
+      isDubbed: true,
+      url: isSeries
+        ? `https://embed.warezcdn.link/serie/${tmdbId}/${s}/${e}`
+        : `https://embed.warezcdn.link/filme/${tmdbId}`,
+    },
     {
       name: "VidLink Ultra HD",
-      desc: "Dublado / Multi-Áudio & Legendas PT-BR (1080p/4K)",
+      desc: "Multi-Áudio & Legendas PT-BR (1080p/4K)",
       isDubbed: true,
       url: isSeries
         ? `https://vidlink.pro/tv/${tmdbId}/${s}/${e}?primaryColor=e50914`
@@ -75,7 +133,7 @@ function getAvailableEmbedServers(activeUrl: string, movie?: Movie) {
     },
     {
       name: "AutoEmbed Cloud",
-      desc: "Dublado & Multi-Áudio (1080p Full HD)",
+      desc: "Multi-Áudio (1080p Full HD)",
       isDubbed: true,
       url: isSeries
         ? `https://player.autoembed.cc/embed/tv/${tmdbId}/${s}/${e}`
@@ -104,16 +162,10 @@ function getAvailableEmbedServers(activeUrl: string, movie?: Movie) {
       url: isSeries
         ? `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=${s}&e=${e}`
         : `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
-    },
-    {
-      name: "EmbedSu Fast",
-      desc: "Buffer Leve e Ágil",
-      isDubbed: false,
-      url: isSeries
-        ? `https://embed.su/embed/tv/${tmdbId}/${s}/${e}`
-        : `https://embed.su/embed/movie/${tmdbId}`,
-    },
-  ];
+    }
+  );
+
+  return servers;
 }
 
 export function VideoPlayer({
@@ -153,6 +205,15 @@ export function VideoPlayer({
   const touchTimer = useRef<{ time: number; x: number } | null>(null);
   const nextEpisodeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const sleepIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const movieRef = useRef(movie);
+  movieRef.current = movie;
+  const startFloatingRef = useRef(startFloating);
+  startFloatingRef.current = startFloating;
+  const nextEpisodeRef = useRef(nextEpisode);
+  nextEpisodeRef.current = nextEpisode;
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
   // Áudio Web API para Modo Noturno e Equalizador de Som
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -411,31 +472,35 @@ export function VideoPlayer({
   const [selectedEmbedUrl, setSelectedEmbedUrl] = useState<string | null>(null);
   const [showServerMenu, setShowServerMenu] = useState(false);
 
+  const rawVideoUrl = movie?.video_url || src || "";
+  const { isDrive, normalizedUrl } = normalizeEmbedOrDriveUrl(rawVideoUrl);
+
+  const isDirectVideoFile =
+    !isDrive &&
+    (/\.(mp4|m3u8|mkv|webm|avi|mov)(\?|$)/i.test(rawVideoUrl) ||
+      (rawVideoUrl.includes("/movies/") && rawVideoUrl.includes("/stream")));
+
   const isEmbed = !!(
-    (movie?.video_url && (
-      movie.video_url.includes("vidlink.pro") ||
-      movie.video_url.includes("autoembed") ||
-      movie.video_url.includes("multiembed") ||
-      movie.video_url.includes("vidsrc") ||
-      movie.video_url.includes("2embed") ||
-      movie.video_url.includes("smashystream") ||
-      movie.video_url.includes("nontongo") ||
-      movie.video_url.includes("/embed") ||
-      (!movie.video_url.includes(".mp4") && !movie.video_url.includes(".m3u8") && !movie.video_url.includes(".mkv") && !movie.video_url.includes(".webm"))
-    )) ||
-    (src && (
-      src.includes("vidlink.pro") ||
-      src.includes("autoembed") ||
-      src.includes("multiembed") ||
-      src.includes("vidsrc") ||
-      src.includes("2embed") ||
-      src.includes("smashystream") ||
-      src.includes("nontongo")
-    ))
+    isDrive ||
+    (movie?.video_url && !isDirectVideoFile) ||
+    (src &&
+      (src.includes("drive.google.com") ||
+        src.includes("superflix") ||
+        src.includes("warezcdn") ||
+        src.includes("vidlink.pro") ||
+        src.includes("autoembed") ||
+        src.includes("multiembed") ||
+        src.includes("vidsrc") ||
+        src.includes("2embed") ||
+        src.includes("smashystream") ||
+        src.includes("nontongo") ||
+        src.includes("/embed")))
   );
-  const activeEmbedUrl = movie?.video_url || src;
+
+  const activeEmbedUrl = isDrive ? normalizedUrl : (movie?.video_url || src);
   const embedServers = isEmbed ? getAvailableEmbedServers(activeEmbedUrl, movie) : [];
   const currentActiveEmbedUrl = selectedEmbedUrl || activeEmbedUrl;
+  const isCurrentUrlDrive = currentActiveEmbedUrl?.includes("drive.google.com");
 
   // --- Inicialização de Fonte HLS ou Vídeo Direto ---
   useEffect(() => {
@@ -492,9 +557,9 @@ export function VideoPlayer({
     };
   }, [src, movie?.video_url, isEmbed]);
 
-
   // --- eventos do <video> ---
   useEffect(() => {
+    if (isEmbed) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -542,8 +607,8 @@ export function VideoPlayer({
     };
     const onEnded = () => {
       saveProgress(movieId, video.duration, video.duration);
-      if (nextEpisode) {
-        router.push(`/watch/${nextEpisode.id}`);
+      if (nextEpisodeRef.current) {
+        routerRef.current.push(`/watch/${nextEpisodeRef.current.id}`);
       }
     };
 
@@ -569,9 +634,16 @@ export function VideoPlayer({
       video.removeEventListener("ended", onEnded);
       saveProgress(movieId, video.currentTime, video.duration);
 
-      const shouldFloat = video && movie && video.currentTime > 5 && !video.ended && !video.paused;
-      if (shouldFloat) {
-        startFloating(movie, video.currentTime, true);
+      const currentMovie = movieRef.current;
+      const shouldFloat =
+        video &&
+        currentMovie &&
+        !currentMovie.is_external &&
+        video.currentTime > 5 &&
+        !video.ended &&
+        !video.paused;
+      if (shouldFloat && currentMovie) {
+        startFloatingRef.current(currentMovie, video.currentTime, true);
       }
 
       // Pausa e cancela o carregamento de rede pendente do vídeo para não travar outras abas/páginas
@@ -581,7 +653,7 @@ export function VideoPlayer({
         video.load();
       }
     };
-  }, [movieId, movie, nextEpisode, router, startFloating]);
+  }, [movieId, isEmbed]);
 
   useEffect(() => {
     closeFloating();
@@ -606,7 +678,7 @@ export function VideoPlayer({
 
   // --- controles ---
   const togglePlay = useCallback(() => {
-    if (screenLocked) return;
+    if (screenLocked || isEmbed) return;
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
@@ -617,11 +689,11 @@ export function VideoPlayer({
     } else {
       video.pause();
     }
-  }, [screenLocked]);
+  }, [screenLocked, isEmbed]);
 
   const skip = useCallback(
     (delta: number) => {
-      if (screenLocked) return;
+      if (screenLocked || isEmbed) return;
       const video = videoRef.current;
       if (!video) return;
       video.currentTime = Math.min(
@@ -631,11 +703,11 @@ export function VideoPlayer({
       setRippleAction(delta > 0 ? "forward" : "backward");
       setTimeout(() => setRippleAction(null), 600);
     },
-    [screenLocked]
+    [screenLocked, isEmbed]
   );
 
   function handleTouchStart(e: React.TouchEvent) {
-    if (screenLocked) return;
+    if (screenLocked || isEmbed) return;
     const touch = e.touches[0];
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -735,6 +807,7 @@ export function VideoPlayer({
 
   // --- atalhos de teclado e TV ---
   useEffect(() => {
+    if (isEmbed) return;
     function onKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -787,9 +860,10 @@ export function VideoPlayer({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePlay, skip, toggleNightMode]);
+  }, [togglePlay, skip, toggleNightMode, isEmbed]);
 
   function handleMouseMove() {
+    if (isEmbed) return;
     setShowControls(true);
     if (hideTimeout.current) clearTimeout(hideTimeout.current);
     hideTimeout.current = setTimeout(() => {
@@ -809,18 +883,18 @@ export function VideoPlayer({
   const activeTrackObj =
     audioTracks.find((t) => t.index === currentAudioTrack) || audioTracks[0];
 
-  const showSkipIntro = current > 5 && current < 130 && (duration > 180 || duration === 0);
+  const showSkipIntro = !isEmbed && current > 5 && current < 130 && (duration > 180 || duration === 0);
 
   return (
     <div
       ref={containerRef}
       className="group relative w-full overflow-hidden rounded-xl bg-black shadow-2xl transition-all"
       onMouseMove={handleMouseMove}
-      onMouseLeave={() => playing && setShowControls(false)}
+      onMouseLeave={() => !isEmbed && playing && setShowControls(false)}
       onTouchStart={handleTouchStart}
     >
       {/* Canvas Ambilight (Glow Dinâmico) */}
-      {ambilightEnabled && (
+      {!isEmbed && ambilightEnabled && (
         <div className="pointer-events-none absolute -inset-6 -z-10 overflow-hidden opacity-70 blur-3xl transition-opacity">
           <canvas
             ref={canvasRef}
@@ -831,16 +905,23 @@ export function VideoPlayer({
         </div>
       )}
 
-      {/* Elemento de Vídeo com Calibração ou Iframe Embed Sandboxed */}
+      {/* Elemento de Vídeo com Calibração ou Iframe Embed / Google Drive */}
       {isEmbed ? (
         <div className="relative aspect-video w-full bg-black flex flex-col">
           {/* Barra Superior de Servidores & Proteção Familiar */}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-black/90 px-3 py-2 text-xs text-white backdrop-blur z-20">
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
-                <span>🛡️</span>
-                <span>Proteção Familiar Ativa (Popups & +18 Bloqueados)</span>
-              </span>
+              {isCurrentUrlDrive ? (
+                <span className="rounded-full bg-blue-500/20 border border-blue-500/40 px-2.5 py-0.5 text-[11px] font-bold text-blue-400 flex items-center gap-1.5">
+                  <span>☁️</span>
+                  <span>Google Drive Player Direto (Alta Velocidade · Sem Anúncios)</span>
+                </span>
+              ) : (
+                <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                  <span>🛡️</span>
+                  <span>Proteção Familiar Ativa (Popups & +18 Bloqueados)</span>
+                </span>
+              )}
               <span className="hidden sm:inline rounded bg-white/10 px-2 py-0.5 text-[10px] text-mute">
                 🇧🇷 Áudio Dublado / Multi-Áudio PT-BR
               </span>
@@ -854,11 +935,15 @@ export function VideoPlayer({
                     onClick={() => setShowServerMenu((v) => !v)}
                     className="flex items-center gap-1.5 rounded-lg border border-rule bg-panel2 px-2.5 py-1 text-xs font-bold text-ink hover:border-brand transition-all"
                   >
-                    <span>⚡ Trocar Servidor ({embedServers.findIndex((s) => s.url === currentActiveEmbedUrl) + 1 || 1}/{embedServers.length})</span>
+                    <span>
+                      ⚡ Trocar Servidor (
+                      {Math.max(1, embedServers.findIndex((s) => s.url === currentActiveEmbedUrl) + 1)}/
+                      {embedServers.length})
+                    </span>
                     <span>▾</span>
                   </button>
                   {showServerMenu && (
-                    <div className="absolute right-0 top-8 w-72 rounded-xl border border-rule bg-panel p-1.5 shadow-2xl z-50 animate-fade-in space-y-1">
+                    <div className="absolute right-0 top-8 w-72 rounded-xl border border-rule bg-panel p-1.5 shadow-2xl z-50 animate-fade-in space-y-1 max-h-80 overflow-y-auto">
                       <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-mute border-b border-rule/50">
                         Servidores Limpos & Verificados
                       </p>
@@ -879,7 +964,13 @@ export function VideoPlayer({
                             <div className="flex items-center justify-between text-xs">
                               <span>🎬 {srv.name}</span>
                               {srv.isDubbed && (
-                                <span className={`text-[9px] px-1.5 py-0.2 rounded ${isCurrent ? "bg-white/20 text-white" : "bg-emerald-500/20 text-emerald-400 font-bold"}`}>
+                                <span
+                                  className={`text-[9px] px-1.5 py-0.2 rounded ${
+                                    isCurrent
+                                      ? "bg-white/20 text-white"
+                                      : "bg-emerald-500/20 text-emerald-400 font-bold"
+                                  }`}
+                                >
                                   PT-BR
                                 </span>
                               )}
@@ -916,8 +1007,12 @@ export function VideoPlayer({
                 key={currentActiveEmbedUrl}
                 src={currentActiveEmbedUrl}
                 title={title}
-                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                referrerPolicy="no-referrer"
+                {...(!isCurrentUrlDrive
+                  ? {
+                      sandbox: "allow-scripts allow-same-origin allow-forms allow-presentation",
+                      referrerPolicy: "no-referrer" as const,
+                    }
+                  : {})}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                 allowFullScreen
                 className="h-full w-full border-0"
@@ -958,13 +1053,13 @@ export function VideoPlayer({
       )}
 
       {/* Ripple Animation de Duplo Toque (+10s / -10s) */}
-      {rippleAction === "backward" && (
+      {!isEmbed && rippleAction === "backward" && (
         <div className="pointer-events-none absolute left-8 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center rounded-full bg-black/60 p-6 text-white animate-ping">
           <span className="text-3xl font-black">⏪</span>
           <span className="text-xs font-bold mt-1">-10s</span>
         </div>
       )}
-      {rippleAction === "forward" && (
+      {!isEmbed && rippleAction === "forward" && (
         <div className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center rounded-full bg-black/60 p-6 text-white animate-ping">
           <span className="text-3xl font-black">⏩</span>
           <span className="text-xs font-bold mt-1">+10s</span>
@@ -972,14 +1067,14 @@ export function VideoPlayer({
       )}
 
       {/* Spinner de Carregamento */}
-      {loading && !error && (
+      {!isEmbed && loading && !error && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="h-14 w-14 animate-spin rounded-full border-4 border-white/20 border-t-brand" />
         </div>
       )}
 
       {/* Botão Central de Play quando Pausado */}
-      {!playing && !loading && !error && !screenLocked && (
+      {!isEmbed && !playing && !loading && !error && !screenLocked && (
         <button
           onClick={togglePlay}
           aria-label="Reproduzir"
@@ -992,7 +1087,7 @@ export function VideoPlayer({
       )}
 
       {/* Mensagem de Erro com Botão de Tentar de Novo */}
-      {error && (
+      {!isEmbed && error && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-black/90 p-6 text-center">
           <span className="text-4xl text-brand">⚠️</span>
           <p className="max-w-md text-sm text-mute">{error}</p>
@@ -1014,7 +1109,7 @@ export function VideoPlayer({
       )}
 
       {/* Banner de Retomar de Onde Parou */}
-      {resumeBanner !== null && !error && !screenLocked && (
+      {!isEmbed && resumeBanner !== null && !error && !screenLocked && (
         <div className="absolute left-6 top-6 z-20 flex items-center gap-3 rounded-lg border border-rule bg-panel/95 px-5 py-2.5 text-sm shadow-card backdrop-blur">
           <span>Continuar de <strong>{formatTime(resumeBanner)}</strong>?</span>
           <button
@@ -1033,7 +1128,7 @@ export function VideoPlayer({
       )}
 
       {/* Botão Pular Abertura (Skip Intro) */}
-      {showSkipIntro && !screenLocked && (
+      {!isEmbed && showSkipIntro && !screenLocked && (
         <button
           onClick={() => skip(85)}
           className="absolute bottom-20 left-6 z-20 flex items-center gap-2 rounded-xl border border-white/20 bg-black/80 px-4 py-2 text-xs font-bold text-white backdrop-blur hover:bg-black hover:border-brand transition-all shadow-2xl animate-fade-in"
@@ -1072,18 +1167,20 @@ export function VideoPlayer({
       )}
 
       {/* Botão de Bloqueio de Tela */}
-      <button
-        onClick={() => setScreenLocked((v) => !v)}
-        aria-label={screenLocked ? "Desbloquear tela" : "Bloquear tela"}
-        className={`absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-sm backdrop-blur transition-opacity ${
-          showControls || screenLocked ? "opacity-100" : "opacity-0"
-        } hover:bg-black/80`}
-      >
-        {screenLocked ? "🔒" : "🔓"}
-      </button>
+      {!isEmbed && (
+        <button
+          onClick={() => setScreenLocked((v) => !v)}
+          aria-label={screenLocked ? "Desbloquear tela" : "Bloquear tela"}
+          className={`absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-sm backdrop-blur transition-opacity ${
+            showControls || screenLocked ? "opacity-100" : "opacity-0"
+          } hover:bg-black/80`}
+        >
+          {screenLocked ? "🔒" : "🔓"}
+        </button>
+      )}
 
       {/* Barra e Controles Principais */}
-      {!screenLocked && (
+      {!isEmbed && !screenLocked && (
         <div
           className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-4 pb-3 pt-12 transition-opacity duration-300 sm:px-6 ${
             showControls || !playing ? "opacity-100" : "opacity-0 pointer-events-none"
