@@ -26,11 +26,19 @@ export function LivePlayer({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [useProxy, setUseProxy] = useState(false);
+  const [useProxy, setUseProxy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pipSupported, setPipSupported] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const hideControlsTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triedFallbackRef = useRef(false);
+
+  // Ao trocar de canal, reseta o estado de fallback e ativa o Proxy Anti-Bloqueio por padrão
+  useEffect(() => {
+    triedFallbackRef.current = false;
+    setUseProxy(true);
+    setError(null);
+  }, [channel?.id]);
 
   // Determina URL final da transmissão (direta ou via proxy)
   const currentStreamUrl = channel
@@ -73,6 +81,7 @@ export function LivePlayer({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setLoading(false);
+        setError(null);
         video.play().catch(() => {
           // Autoplay policy pode exigir interação do usuário
           setPlaying(false);
@@ -83,12 +92,12 @@ export function LivePlayer({
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              // Tenta recuperar erro de rede
-              if (!useProxy) {
-                // Tenta ativar proxy automaticamente para contornar CORS
-                setUseProxy(true);
+              // Tenta alternar automaticamente entre Proxy e Conexão Direta 1 vez antes de exibir erro
+              if (!triedFallbackRef.current) {
+                triedFallbackRef.current = true;
+                setUseProxy((prev) => !prev);
+                return;
               } else {
-                hls.startLoad();
                 setError(
                   "Erro de conexão com a transmissão ao vivo. O sinal pode estar temporariamente indisponível."
                 );
@@ -98,6 +107,11 @@ export function LivePlayer({
               hls.recoverMediaError();
               break;
             default:
+              if (!triedFallbackRef.current) {
+                triedFallbackRef.current = true;
+                setUseProxy((prev) => !prev);
+                return;
+              }
               hls.destroy();
               setError("Não foi possível reproduzir este canal ao vivo.");
               break;
@@ -114,8 +128,9 @@ export function LivePlayer({
       });
       video.addEventListener("error", () => {
         setLoading(false);
-        if (!useProxy) {
-          setUseProxy(true);
+        if (!triedFallbackRef.current) {
+          triedFallbackRef.current = true;
+          setUseProxy((prev) => !prev);
         } else {
           setError("Erro ao carregar o canal no reprodutor nativo.");
         }

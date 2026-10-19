@@ -516,3 +516,13 @@ class SmartVODImportResponse(BaseModel):
     results: List[dict]
 
 
+class PCBrowseRequest(BaseModel):
+    mode: str = "file"  # "file" ou "folder"
+
+
+class PCScanPathRequest(BaseModel):
+    path: str
+    is_private: bool = False
+
+
+

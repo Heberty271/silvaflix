@@ -20,100 +20,84 @@ admin_router = APIRouter(prefix="/admin/live", tags=["admin-live"])
 
 DEFAULT_FREE_CHANNELS = [
     {
-        "name": "NASA TV HD",
-        "category": "Cultura & Educação",
-        "stream_url": "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8",
-        "logo_url": "https://images.nasa.gov/images/nasa_logo.png",
-        "epg_id": "NASATV.us",
+        "name": "CNN Brasil HD",
+        "category": "Notícias",
+        "stream_url": "https://d25usgadhphvwi.cloudfront.net/hls/main.m3u8",
+        "logo_url": "",
+        "epg_id": "CNNBrasil.br",
         "order": 1,
     },
     {
-        "name": "Red Bull TV",
-        "category": "Esportes",
-        "stream_url": "https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8",
-        "logo_url": "https://img.redbull.com/images/w_300/q_auto,f_auto/redbullcom/2020/6/15/h305u2gqfv7o1n9x1vfe/red-bull-tv-logo",
-        "epg_id": "RedBullTV.global",
+        "name": "Canal UOL 1080p",
+        "category": "Notícias",
+        "stream_url": "https://video24.mais.uol.com.br/live/6146.m3u8",
+        "logo_url": "",
+        "epg_id": "CanalUOL.br",
         "order": 2,
     },
     {
-        "name": "Amazon Sat HD",
-        "category": "Abertos / Brasil",
-        "stream_url": "https://amazonsat.brasilstream.com.br/hls/amazonsat/index.m3u8",
+        "name": "Cartoon Network Brasil",
+        "category": "Infantil & Desenhos",
+        "stream_url": "http://45.162.64.114/CARTOON_NETWORK/index.m3u8",
         "logo_url": "",
-        "epg_id": "AmazonSat.br",
+        "epg_id": "CartoonNetwork.br",
         "order": 3,
     },
     {
-        "name": "Adesso TV HD",
-        "category": "Abertos / Brasil",
-        "stream_url": "https://cdn.jmvstream.com/w/LVW-9715/LVW9715_12B26T62tm/playlist.m3u8",
+        "name": "Bob Esponja Calça Quadrada",
+        "category": "Infantil & Desenhos",
+        "stream_url": "https://jmp2.uk/plu-62545c0b002f4b0007688b61.m3u8",
         "logo_url": "",
-        "epg_id": "AdessoTV.br",
+        "epg_id": "BobEsponja.br",
         "order": 4,
     },
     {
-        "name": "Aratu On Salvador",
-        "category": "Abertos / Brasil",
-        "stream_url": "https://cdn.live.br1.jmvstream.com/w/LVW-9359/LVW9359_XSyReL0QVf/playlist.m3u8",
+        "name": "Avatar: A Lenda de Aang",
+        "category": "Infantil & Desenhos",
+        "stream_url": "https://jmp2.uk/plu-6759eeb1bd523200083b4f29.m3u8",
         "logo_url": "",
-        "epg_id": "AratuOn.br",
+        "epg_id": "Avatar.br",
         "order": 5,
     },
     {
-        "name": "STZ TV 1080p",
-        "category": "Abertos / Brasil",
-        "stream_url": "https://cdn.live.br1.jmvstream.com/webtv/AVJ-12952/playlist/playlist.m3u8",
+        "name": "AXN Brasil HD",
+        "category": "Filmes & Séries",
+        "stream_url": "http://170.83.16.50/AXN/index.m3u8",
         "logo_url": "",
-        "epg_id": "STZTV.br",
+        "epg_id": "AXN.br",
         "order": 6,
     },
     {
-        "name": "SOU TV",
-        "category": "Entretenimento & Variedades",
-        "stream_url": "https://video10.logicahost.com.br/soutv/soutv/playlist.m3u8",
+        "name": "AMC Brasil HD",
+        "category": "Filmes & Séries",
+        "stream_url": "http://170.83.49.66:8083/AMCHD/index.m3u8",
         "logo_url": "",
-        "epg_id": "SouTV.br",
+        "epg_id": "AMC.br",
         "order": 7,
     },
     {
-        "name": "AgroCanal",
-        "category": "Entretenimento & Variedades",
-        "stream_url": "https://aovivo.equipea.com.br:5443/aovivort/streams/pshRLrnv6isXq7RG4747567774043229.m3u8",
+        "name": "Adrenalina Pura TV Brasil",
+        "category": "Filmes & Séries",
+        "stream_url": "https://jmp2.uk/plu-61b790b985706b00072cb797.m3u8",
         "logo_url": "",
-        "epg_id": "AgroCanal.br",
+        "epg_id": "AdrenalinaPura.br",
         "order": 8,
     },
     {
-        "name": "DW Português",
-        "category": "Notícias",
-        "stream_url": "https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8",
+        "name": "A&E Brasil HD",
+        "category": "Entretenimento & Variedades",
+        "stream_url": "http://170.83.16.50/AeE/index.m3u8",
         "logo_url": "",
-        "epg_id": "DWPortugues.de",
+        "epg_id": "AE.br",
         "order": 9,
     },
     {
-        "name": "Sony Movies HD",
-        "category": "Filmes & Séries",
-        "stream_url": "http://45.177.114.115/SONY_MOVIES/index.m3u8",
+        "name": "Canal Futura HD",
+        "category": "Cultura & Educação",
+        "stream_url": "http://45.162.64.114/FUTURA/index.m3u8",
         "logo_url": "",
-        "epg_id": "SonyMovies.br",
+        "epg_id": "Futura.br",
         "order": 10,
-    },
-    {
-        "name": "Sony Channel HD",
-        "category": "Entretenimento & Variedades",
-        "stream_url": "http://170.83.16.50/SONY_CHANNEL/index.m3u8",
-        "logo_url": "",
-        "epg_id": "SonyChannel.br",
-        "order": 11,
-    },
-    {
-        "name": "SporTV 3 HD",
-        "category": "Esportes",
-        "stream_url": "http://170.83.49.66:8083/SPORTV3HD/index.m3u8",
-        "logo_url": "",
-        "epg_id": "SporTV3.br",
-        "order": 12,
     },
     {
         "name": "Arte 1 HD",
@@ -121,24 +105,40 @@ DEFAULT_FREE_CHANNELS = [
         "stream_url": "http://45.162.64.114/ARTE1/index.m3u8",
         "logo_url": "",
         "epg_id": "Arte1.br",
+        "order": 11,
+    },
+    {
+        "name": "Adesso TV HD",
+        "category": "Abertos / Brasil",
+        "stream_url": "https://cdn.jmvstream.com/w/LVW-9715/LVW9715_12B26T62tm/playlist.m3u8",
+        "logo_url": "",
+        "epg_id": "AdessoTV.br",
+        "order": 12,
+    },
+    {
+        "name": "Aratu On Salvador",
+        "category": "Abertos / Brasil",
+        "stream_url": "https://cdn.live.br1.jmvstream.com/w/LVW-9359/LVW9359_XSyReL0QVf/playlist.m3u8",
+        "logo_url": "",
+        "epg_id": "AratuOn.br",
         "order": 13,
     },
     {
-        "name": "Terra Viva",
-        "category": "Entretenimento & Variedades",
-        "stream_url": "http://45.177.114.115/TERRAVIVA/index.m3u8",
-        "logo_url": "",
-        "epg_id": "TerraViva.br",
+        "name": "Red Bull TV",
+        "category": "Esportes",
+        "stream_url": "https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8",
+        "logo_url": "https://img.redbull.com/images/w_300/q_auto,f_auto/redbullcom/2020/6/15/h305u2gqfv7o1n9x1vfe/red-bull-tv-logo",
+        "epg_id": "RedBullTV.global",
         "order": 14,
     },
     {
-        "name": "AgroMais HD",
-        "category": "Entretenimento & Variedades",
-        "stream_url": "http://45.162.64.114/AGROMAIS/index.m3u8",
-        "logo_url": "",
-        "epg_id": "AgroMais.br",
+        "name": "NASA TV HD",
+        "category": "Cultura & Educação",
+        "stream_url": "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8",
+        "logo_url": "https://images.nasa.gov/images/nasa_logo.png",
+        "epg_id": "NASATV.us",
         "order": 15,
-    }
+    },
 ]
 
 
@@ -519,7 +519,7 @@ async def live_proxy_stream(
 ):
     """
     Proxy universal de alta performance para HLS (.m3u8 e .ts).
-    Resolve problemas de CORS e restrições de player no navegador.
+    Resolve problemas de CORS, redirecionamentos 302 (Pluto TV / JMVStream / Akamai) e restrições de cabeçalhos.
     """
     if not url:
         raise HTTPException(status_code=400, detail="Parâmetro url é obrigatório")
@@ -529,33 +529,66 @@ async def live_proxy_stream(
     except Exception:
         decoded_url = url
 
+    parsed_init = urllib.parse.urlparse(decoded_url)
+    origin_base = f"{parsed_init.scheme}://{parsed_init.netloc}" if parsed_init.scheme and parsed_init.netloc else ""
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     }
+    if origin_base and "pluto.tv" not in origin_base and "jmp2.uk" not in origin_base:
+        headers["Referer"] = origin_base + "/"
 
-    client = httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers)
+    client = httpx.AsyncClient(timeout=20.0, follow_redirects=True, verify=False)
 
     try:
-        upstream_req = client.build_request("GET", decoded_url)
+        upstream_req = client.build_request("GET", decoded_url, headers=headers)
         upstream_res = await client.send(upstream_req, stream=True)
 
+        # Se bloqueado por User-Agent/Referer (401/403), tenta com perfil VLC/IPTV
+        if upstream_res.status_code in (401, 403):
+            await upstream_res.aclose()
+            alt_headers = {
+                "User-Agent": "VLC/3.0.20 LibVLC/3.0.20",
+                "Accept": "*/*",
+            }
+            upstream_req = client.build_request("GET", decoded_url, headers=alt_headers)
+            upstream_res = await client.send(upstream_req, stream=True)
+
+        if upstream_res.status_code >= 400:
+            status_err = upstream_res.status_code
+            await upstream_res.aclose()
+            await client.aclose()
+            raise HTTPException(status_code=status_err, detail=f"Canal retornou status {status_err}")
+
+        effective_url = str(upstream_res.url)
+        parsed_eff = urllib.parse.urlparse(effective_url)
+        eff_query = parsed_eff.query
+
         content_type = upstream_res.headers.get("content-type", "").lower()
-        is_m3u8 = (
+        looks_like_m3u8 = (
             "mpegurl" in content_type
-            or "m3u8" in decoded_url.lower()
             or "m3u" in content_type
-            or "application/x-mpegurl" in content_type
+            or ".m3u8" in effective_url.lower()
+            or ".m3u8" in decoded_url.lower()
         )
 
-        if is_m3u8:
+        if looks_like_m3u8:
             body_bytes = await upstream_res.aread()
             await upstream_res.aclose()
             await client.aclose()
 
             text_content = body_bytes.decode("utf-8", errors="ignore")
-            base_url_dir = decoded_url.rsplit("/", 1)[0] + "/"
+            if "#EXTM3U" not in text_content:
+                raise HTTPException(status_code=502, detail="Resposta não é um manifesto HLS válido (#EXTM3U ausente)")
+
+            def resolve_and_wrap(rel_or_abs: str) -> str:
+                abs_u = urllib.parse.urljoin(effective_url, rel_or_abs)
+                # Preserva tokens de sessão (ex: Pluto TV / Akamai) em sub-playlists .m3u8
+                if eff_query and ".m3u8" in abs_u.lower() and "?" not in abs_u:
+                    abs_u = f"{abs_u}?{eff_query}"
+                return f"proxy?url={urllib.parse.quote(abs_u, safe='')}"
 
             rewritten_lines = []
             for line in text_content.splitlines():
@@ -568,17 +601,13 @@ async def live_proxy_stream(
                     if 'URI="' in trimmed:
                         def replace_key_uri(match):
                             orig_uri = match.group(1)
-                            abs_uri = urllib.parse.urljoin(base_url_dir, orig_uri)
-                            proxy_uri = f"/live/proxy?url={urllib.parse.quote(abs_uri, safe='')}"
-                            return f'URI="{proxy_uri}"'
+                            return f'URI="{resolve_and_wrap(orig_uri)}"'
                         modified_tag = re.sub(r'URI="([^"]+)"', replace_key_uri, trimmed)
                         rewritten_lines.append(modified_tag)
                     else:
                         rewritten_lines.append(line)
                 else:
-                    abs_target = urllib.parse.urljoin(base_url_dir, trimmed)
-                    proxy_target = f"/live/proxy?url={urllib.parse.quote(abs_target, safe='')}"
-                    rewritten_lines.append(proxy_target)
+                    rewritten_lines.append(resolve_and_wrap(trimmed))
 
             new_manifest = "\n".join(rewritten_lines)
             return Response(
@@ -617,6 +646,9 @@ async def live_proxy_stream(
             media_type=upstream_res.headers.get("content-type", "video/mp2t"),
         )
 
+    except HTTPException:
+        await client.aclose()
+        raise
     except Exception as e:
         await client.aclose()
         raise HTTPException(status_code=502, detail=f"Erro ao acessar stream ao vivo via proxy: {str(e)}")

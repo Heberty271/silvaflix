@@ -592,13 +592,27 @@ export function VideoPlayer({
       }
     };
     const onError = () => {
+      // Se a URL atual for de um túnel antigo/expirado (.trycloudflare.com / .loca.lt), tenta redirecionar para localhost:8000 automaticamente
+      if (
+        video.src &&
+        (video.src.includes("trycloudflare.com") || video.src.includes("loca.lt")) &&
+        !video.dataset.retriedLocal
+      ) {
+        video.dataset.retriedLocal = "true";
+        const newSrc = video.src.replace(/^https?:\/\/[^/]+/, "http://localhost:8000");
+        video.src = newSrc;
+        video.load();
+        video.play().catch(() => {});
+        return;
+      }
+
       setLoading(false);
       const code = video.error?.code;
       const messages: Record<number, string> = {
         1: "O carregamento do vídeo foi interrompido.",
         2: "Falha de rede ao carregar o vídeo. Confira sua conexão.",
         3: "Não foi possível decodificar este arquivo de vídeo.",
-        4: "Formato de vídeo não suportado nativamente pelo navegador.",
+        4: "Formato de vídeo não suportado ou servidor desconectado. Clique em Tentar de novo.",
       };
       setError(
         (code && messages[code]) ||
@@ -1029,7 +1043,6 @@ export function VideoPlayer({
           }}
           onClick={togglePlay}
           playsInline
-          crossOrigin="anonymous"
         >
           {subtitleUrl && (
             <track
@@ -1097,6 +1110,10 @@ export function VideoPlayer({
               setLoading(true);
               const v = videoRef.current;
               if (v) {
+                delete v.dataset.retriedLocal;
+                if (v.src && (v.src.includes("trycloudflare.com") || v.src.includes("loca.lt"))) {
+                  v.src = v.src.replace(/^https?:\/\/[^/]+/, "http://localhost:8000");
+                }
                 v.load();
                 v.play().catch(() => setPlaying(false));
               }

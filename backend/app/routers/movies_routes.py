@@ -18,7 +18,7 @@ from ..vod_scanner import scan_and_import_smart_vod
 from ..auth import get_current_user, require_admin
 from ..config import MEDIA_MOVIES_DIR, MEDIA_THUMBS_DIR, TMDB_API_KEY
 from ..database import get_db
-from ..audio_utils import probe_audio_tracks, get_ffmpeg_binary
+from ..audio_utils import probe_audio_tracks, probe_media_info, get_ffmpeg_binary
 
 router = APIRouter(tags=["movies"])
 
@@ -26,14 +26,77 @@ CHUNK_SIZE = 1024 * 1024  # 1 MB por pedaco
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"}
 
 
+import threading
+
+_DRIVE_STATUS_CACHE: dict[str, tuple[bool, float]] = {}
+
+
+def _is_drive_online(path: str, timeout: float = 0.6) -> bool:
+    """Verifica rapidamente se a unidade de disco (ex: D:\\) está respondendo sem travar a thread em caso de falha de I/O do Windows."""
+    drive = os.path.splitdrive(os.path.abspath(path))[0].upper()
+    if not drive or drive == "C:":
+        return True
+    now = time.time()
+    cached = _DRIVE_STATUS_CACHE.get(drive)
+    if cached and (now - cached[1] < 15.0):
+        return cached[0]
+
+    result = [False]
+
+    def _check():
+        try:
+            result[0] = os.path.isdir(drive + "\\")
+        except Exception:
+            result[0] = False
+
+    t = threading.Thread(target=_check, daemon=True)
+    t.start()
+    t.join(timeout)
+    online = result[0] if not t.is_alive() else False
+    _DRIVE_STATUS_CACHE[drive] = (online, now)
+    return online
+
+
+def _safe_isfile(path: str) -> bool:
+    if not path or not _is_drive_online(path):
+        return False
+    try:
+        return os.path.isfile(path)
+    except Exception:
+        return False
+
+
 def _resolve_media_path(filename: str) -> str:
-    """Junta o nome/caminho relativo do arquivo com a pasta de midia configurada
-    e garante que o resultado continua DENTRO dessa pasta."""
-    base = os.path.abspath(MEDIA_MOVIES_DIR)
-    candidate = os.path.abspath(os.path.join(base, filename))
-    if os.path.commonpath([base, candidate]) != base:
-        raise HTTPException(status_code=400, detail="Caminho de arquivo invalido")
-    return candidate
+    """Resolve o caminho do arquivo de vídeo no PC sem travar em discos desconectados."""
+    if not filename:
+        raise HTTPException(status_code=400, detail="Caminho de arquivo vazio")
+
+    norm_name = os.path.normpath(filename)
+    ext = os.path.splitext(norm_name)[1].lower()
+
+    if os.path.isabs(norm_name) and _safe_isfile(norm_name):
+        if ext in VIDEO_EXTENSIONS or ext in (".ts", ".wmv", ".flv", ".vob"):
+            return norm_name
+
+    search_roots = [
+        os.path.abspath(MEDIA_MOVIES_DIR),
+        "D:\\",
+        "E:\\",
+        os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "movies")),
+    ]
+    for root_dir in search_roots:
+        if not root_dir or not _is_drive_online(root_dir):
+            continue
+        try:
+            candidate = os.path.abspath(os.path.join(root_dir, filename))
+            if os.path.commonpath([root_dir, candidate]) == root_dir and _safe_isfile(candidate):
+                return candidate
+        except Exception:
+            continue
+
+    fallback_base = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "movies"))
+    return os.path.abspath(os.path.join(fallback_base, filename))
+
 
 
 def _visible_query(db: Session, user: Optional[models.User]):
@@ -84,9 +147,19 @@ def parse_series_info(filename: str) -> dict:
 
 
 def clean_filename_for_search(filename: str) -> tuple[str, Optional[int]]:
-    """Extrai título limpo e ano de um arquivo de vídeo para consulta no TMDB."""
+    """Extrai título limpo e ano de um arquivo de vídeo (e da pasta pai se necessário) para consulta no TMDB."""
     basename = os.path.splitext(os.path.basename(filename))[0]
-    return clean_messy_title(basename)
+    title, year = clean_messy_title(basename)
+
+    parent_dir = os.path.basename(os.path.dirname(filename))
+    if parent_dir and parent_dir not in ("", ".", "/", "\\") and not parent_dir.endswith(":"):
+        parent_title, parent_year = clean_messy_title(parent_dir)
+        if not year and parent_year:
+            year = parent_year
+        if (not title or len(title) < 3 or title.lower() in ("filme", "movie", "video", "dublado", "playback")) and parent_title:
+            title = parent_title
+
+    return title, year
 
 
 @router.get("/movies", response_model=list[schemas.MovieOut])
@@ -137,7 +210,18 @@ def get_movie(movie_id: int, db: Session = Depends(get_db), current_user: models
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
     if movie.is_private and current_user.role != models.RoleEnum.admin:
         raise HTTPException(status_code=403, detail="Este conteudo e privado")
-    return movie
+
+    out = schemas.MovieOut.model_validate(movie)
+    if not movie.is_external and movie.filename and not movie.filename.startswith("http"):
+        file_path = _resolve_media_path(movie.filename)
+        if _safe_isfile(file_path):
+            # Disco local (D:\) está conectado e o arquivo existe: usa reprodução direta do PC
+            out.video_url = None
+            out.is_external = False
+        elif movie.video_url:
+            # Disco local (D:\) desconectado/ausente: ativa automaticamente os servidores em nuvem PT-BR
+            out.is_external = True
+    return out
 
 
 @router.get("/movies/{movie_id}/audio-tracks")
@@ -150,23 +234,22 @@ def get_movie_audio_tracks(
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_external or (movie.filename and movie.filename.startswith("http")) or (movie.video_url and movie.video_url.startswith("http")):
-        return [{
-            "index": 0,
-            "title": "Áudio Principal (Web)",
-            "language": "por",
-            "language_name": "Português",
-            "flag": "🇧🇷",
-            "codec": "aac",
-            "is_default": True
-        }]
-    try:
-        file_path = _resolve_media_path(movie.filename)
-        if not os.path.isfile(file_path):
-            return []
-        return probe_audio_tracks(file_path)
-    except Exception:
-        return []
+    if not movie.is_external and movie.filename and not movie.filename.startswith("http"):
+        try:
+            file_path = _resolve_media_path(movie.filename)
+            if _safe_isfile(file_path):
+                return probe_audio_tracks(file_path)
+        except Exception:
+            pass
+    return [{
+        "index": 0,
+        "title": "🇧🇷 Português (Dublado PT-BR)",
+        "language": "por",
+        "language_name": "Português",
+        "flag": "🇧🇷",
+        "codec": "aac",
+        "is_default": True
+    }]
 
 
 @router.get("/movies/{movie_id}/thumbnail")
@@ -278,10 +361,12 @@ def get_movie_subtitles(movie_id: int, db: Session = Depends(get_db)):
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_external or (movie.filename and movie.filename.startswith("http")) or (movie.video_url and movie.video_url.startswith("http")):
-        raise HTTPException(status_code=404, detail="Nenhuma legenda local para stream externo")
+    if movie.is_external or (movie.filename and movie.filename.startswith("http")):
+        return Response(content="WEBVTT\n\n", media_type="text/vtt")
 
     file_path = _resolve_media_path(movie.filename)
+    if not _safe_isfile(file_path):
+        return Response(content="WEBVTT\n\n", media_type="text/vtt")
     base_no_ext = os.path.splitext(file_path)[0]
 
     candidates = [
@@ -294,7 +379,7 @@ def get_movie_subtitles(movie_id: int, db: Session = Depends(get_db)):
     ]
 
     for sub_path in candidates:
-        if os.path.isfile(sub_path):
+        if _safe_isfile(sub_path):
             ext = os.path.splitext(sub_path)[1].lower()
             try:
                 with open(sub_path, "r", encoding="utf-8-sig", errors="replace") as f:
@@ -305,7 +390,7 @@ def get_movie_subtitles(movie_id: int, db: Session = Depends(get_db)):
             except Exception:
                 pass
 
-    raise HTTPException(status_code=404, detail="Nenhuma legenda encontrada para este filme")
+    return Response(content="WEBVTT\n\n", media_type="text/vtt")
 
 
 RANGE_RE = re.compile(r"bytes=(\d+)-(\d*)")
@@ -316,46 +401,95 @@ def stream_movie(
     movie_id: int,
     request: Request,
     audio_track: Optional[int] = None,
+    start: Optional[float] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
 ):
-    """Envia o video em pedacos (HTTP Range Requests), remuxa em tempo real ou redireciona stream externo."""
+    """Envia o video em pedacos (HTTP Range Requests), remuxa/transcodifica em tempo real ou redireciona stream externo."""
     movie = db.query(models.Movie).filter(models.Movie.id == movie_id).first()
     if not movie:
         raise HTTPException(status_code=404, detail="Filme nao encontrado")
-    if movie.is_private and current_user.role != models.RoleEnum.admin:
-        raise HTTPException(status_code=403, detail="Este conteudo e privado")
+    if movie.is_private:
+        current_user = get_current_user(request=request, token=None, db=db)
+        if current_user.role != models.RoleEnum.admin:
+            raise HTTPException(status_code=403, detail="Este conteudo e privado")
 
-    # Suporte a Stream Externo / VOD Web
     target_url = movie.video_url or (movie.filename if movie.filename and movie.filename.startswith("http") else None)
-    if movie.is_external or target_url:
+    if movie.is_external or (movie.filename and movie.filename.startswith("http")):
         if target_url:
             return RedirectResponse(url=target_url, status_code=307)
         raise HTTPException(status_code=400, detail="URL de streaming externo não encontrada")
 
     file_path = _resolve_media_path(movie.filename)
-    if not os.path.isfile(file_path):
+    if not _safe_isfile(file_path):
+        if target_url:
+            return RedirectResponse(url=target_url, status_code=307)
         raise HTTPException(status_code=404, detail="Arquivo de video ausente no disco")
 
     ext = os.path.splitext(file_path)[1].lower()
-    needs_remux = ext in (".mkv", ".avi", ".ts", ".wmv", ".flv", ".mov", ".vob") or (audio_track is not None and audio_track > 0)
+    media_info = probe_media_info(file_path)
+    video_codec = media_info.get("video_codec")
+    pix_fmt = media_info.get("pix_fmt")
+    tracks = media_info.get("audio_tracks", [])
+
+    track_to_use = audio_track if (audio_track is not None and audio_track >= 0) else 0
+    selected_audio = tracks[track_to_use] if track_to_use < len(tracks) else (tracks[0] if tracks else {})
+    audio_codec = selected_audio.get("codec", "aac")
+    is_surround = selected_audio.get("is_surround", False)
+
+    needs_video_transcode = (
+        ext in (".avi", ".wmv", ".flv", ".vob", ".mpg", ".mpeg")
+        or (video_codec not in ("h264", "avc1", None))
+        or (pix_fmt == "yuv420p10le")
+    )
+
+    needs_remux = (
+        needs_video_transcode
+        or ext in (".mkv", ".ts", ".mov")
+        or (audio_track is not None and audio_track > 0)
+        or (start is not None and start > 0)
+        or (audio_codec not in ("aac",))
+        or is_surround
+    )
 
     if needs_remux:
         ffmpeg_bin = get_ffmpeg_binary()
-        track_to_use = audio_track if (audio_track is not None and audio_track >= 0) else 0
         cmd = [
             ffmpeg_bin,
             "-hide_banner",
+            "-fflags", "+genpts+discardcorrupt",
+        ]
+        if start is not None and start > 0:
+            cmd.extend(["-ss", str(float(start))])
+        cmd.extend([
             "-i", file_path,
             "-map", "0:v:0",
-            "-map", f"0:a:{track_to_use}",
-            "-c:v", "copy",
+            "-map", f"0:a:{track_to_use}?",
+            "-sn",
+            "-dn",
+            "-map_chapters", "-1",
+            "-map_metadata", "-1",
+        ])
+        if needs_video_transcode:
+            cmd.extend([
+                "-vf", "scale='min(1920,trunc(iw/2)*2)':-2,format=yuv420p",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
+            ])
+        else:
+            cmd.extend(["-c:v", "copy"])
+
+        cmd.extend([
             "-c:a", "aac",
+            "-ac", "2",
+            "-ar", "48000",
             "-b:a", "192k",
+            "-avoid_negative_ts", "make_zero",
             "-f", "mp4",
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
             "pipe:1",
-        ]
+        ])
+
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
 
         def iter_ffmpeg():
@@ -372,7 +506,15 @@ def stream_movie(
                 except Exception:
                     pass
 
-        return StreamingResponse(iter_ffmpeg(), media_type="video/mp4")
+        return StreamingResponse(
+            iter_ffmpeg(),
+            status_code=200,
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "none",
+                "Cache-Control": "no-store",
+            },
+        )
 
     # Streaming padrão por Range Requests
     file_size = os.path.getsize(file_path)
@@ -493,26 +635,154 @@ def get_admin_stats(db: Session = Depends(get_db)):
 
 @admin_router.get("/movies/available-files")
 def list_available_files(db: Session = Depends(get_db)):
-    """Varre a pasta de midia e lista os arquivos de video que ainda nao foram cadastrados."""
-    if not os.path.isdir(MEDIA_MOVIES_DIR):
-        return []
-
-    already_registered = {
-        m.filename for m in db.query(models.Movie.filename).all()
-    }
+    """Varre a pasta de midia (e drives locais D:\\ / E:\\) e lista os arquivos de video que ainda nao foram cadastrados."""
+    already_registered = set()
+    for (fname,) in db.query(models.Movie.filename).all():
+        if fname:
+            already_registered.add(fname)
+            already_registered.add(fname.replace("\\", "/"))
+            already_registered.add(os.path.normpath(fname))
 
     found = []
-    for root, dirs, filenames in os.walk(MEDIA_MOVIES_DIR):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "$RECYCLE.BIN"]
-        for name in filenames:
-            if os.path.splitext(name)[1].lower() not in VIDEO_EXTENSIONS:
-                continue
-            rel_path = os.path.relpath(os.path.join(root, name), MEDIA_MOVIES_DIR)
-            rel_path = rel_path.replace(os.sep, "/")
-            if rel_path not in already_registered:
-                found.append(rel_path)
+    seen_abs = set()
+
+    scan_roots = [MEDIA_MOVIES_DIR]
+    for extra_drv in ("D:\\", "E:\\", os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "movies")):
+        if os.path.isdir(extra_drv) and os.path.abspath(extra_drv) not in [os.path.abspath(r) for r in scan_roots if os.path.isdir(r)]:
+            scan_roots.append(extra_drv)
+
+    primary_abs = os.path.abspath(MEDIA_MOVIES_DIR) if os.path.isdir(MEDIA_MOVIES_DIR) else None
+
+    for base_dir in scan_roots:
+        if not os.path.isdir(base_dir):
+            continue
+        base_abs = os.path.abspath(base_dir)
+        for root, dirs, filenames in os.walk(base_abs):
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".")
+                and d not in ("$RECYCLE.BIN", "System Volume Information", "Windows", "Program Files", "Program Files (x86)", "AppData", "node_modules", "venv")
+            ]
+            for name in filenames:
+                if os.path.splitext(name)[1].lower() not in VIDEO_EXTENSIONS:
+                    continue
+                full_path = os.path.abspath(os.path.join(root, name))
+                if full_path in seen_abs:
+                    continue
+                seen_abs.add(full_path)
+
+                if primary_abs and os.path.commonpath([primary_abs, full_path]) == primary_abs:
+                    rel_path = os.path.relpath(full_path, primary_abs).replace(os.sep, "/")
+                else:
+                    rel_path = full_path.replace(os.sep, "/")
+
+                if (
+                    rel_path not in already_registered
+                    and full_path not in already_registered
+                    and full_path.replace(os.sep, "/") not in already_registered
+                ):
+                    found.append(rel_path)
 
     return sorted(found)
+
+
+async def _register_local_video_file(
+    rel_or_abs_path: str,
+    db: Session,
+    source_name: str = "Servidor Local (Disco)",
+    is_private: bool = False,
+) -> dict:
+    """Registra um arquivo de vídeo local consultando automaticamente o TMDB para pôster, fundo e sinopse."""
+    clean_title, file_year = clean_filename_for_search(rel_or_abs_path)
+    series_info = parse_series_info(rel_or_abs_path)
+
+    candidates = []
+    if TMDB_API_KEY and clean_title:
+        try:
+            candidates = await tmdb.search_movies(clean_title)
+        except Exception:
+            pass
+
+    if candidates:
+        chosen = candidates[0]
+        if file_year:
+            for c in candidates:
+                if c.year and int(c.year) == file_year:
+                    chosen = c
+                    break
+
+        details = await tmdb.get_movie_details(chosen.tmdb_id)
+        title_final = details["title"]
+        if series_info.get("is_series"):
+            title_final = f"{details['title']} - T{series_info['season_number']}E{series_info['episode_number']}"
+
+        movie = models.Movie(
+            title=title_final,
+            synopsis=details["synopsis"],
+            year=details["year"],
+            genre=details["genre"],
+            duration_minutes=details["duration_minutes"],
+            director=details.get("director"),
+            cast=details.get("cast"),
+            filename=rel_or_abs_path,
+            is_external=False,
+            source_name=source_name,
+            is_private=is_private,
+            is_series=series_info.get("is_series", False),
+            series_title=series_info.get("series_title") or (details["title"] if series_info.get("is_series") else None),
+            season_number=series_info.get("season_number"),
+            episode_number=series_info.get("episode_number"),
+            collection_name=details.get("collection_name"),
+            trailer_youtube_id=details.get("trailer_youtube_id"),
+        )
+        db.add(movie)
+        db.commit()
+        db.refresh(movie)
+
+        if details.get("poster_url"):
+            try:
+                img = await tmdb.download_poster(details["poster_url"])
+                thumb_name = f"movie_{movie.id}.jpg"
+                with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
+                    f.write(img)
+                movie.thumbnail_filename = thumb_name
+            except Exception:
+                pass
+
+        if details.get("backdrop_url"):
+            try:
+                img = await tmdb.download_poster(details["backdrop_url"])
+                bg_name = f"movie_{movie.id}_bg.jpg"
+                with open(os.path.join(MEDIA_THUMBS_DIR, bg_name), "wb") as f:
+                    f.write(img)
+                movie.backdrop_filename = bg_name
+            except Exception:
+                pass
+
+        db.commit()
+        db.refresh(movie)
+        return {"filename": rel_or_abs_path, "title": movie.title, "status": "added", "movie_id": movie.id}
+    else:
+        title_final = clean_title.title() if clean_title else os.path.splitext(os.path.basename(rel_or_abs_path))[0]
+        if series_info.get("is_series"):
+            title_final = f"{series_info['series_title']} - T{series_info['season_number']}E{series_info['episode_number']}"
+
+        movie = models.Movie(
+            title=title_final,
+            filename=rel_or_abs_path,
+            year=file_year,
+            is_external=False,
+            source_name=source_name,
+            is_private=is_private,
+            is_series=series_info.get("is_series", False),
+            series_title=series_info.get("series_title"),
+            season_number=series_info.get("season_number"),
+            episode_number=series_info.get("episode_number"),
+        )
+        db.add(movie)
+        db.commit()
+        db.refresh(movie)
+        return {"filename": rel_or_abs_path, "title": movie.title, "status": "added_without_tmdb", "movie_id": movie.id}
 
 
 @admin_router.post("/movies/auto-scan")
@@ -527,97 +797,10 @@ async def auto_scan_movies(db: Session = Depends(get_db)):
     skipped_count = 0
 
     for rel_path in available:
-        clean_title, file_year = clean_filename_for_search(rel_path)
-        series_info = parse_series_info(rel_path)
-
         try:
-            candidates = []
-            try:
-                candidates = await tmdb.search_movies(clean_title)
-            except Exception:
-                pass
-
-            if candidates:
-                chosen = candidates[0]
-                if file_year:
-                    for c in candidates:
-                        if c.year and int(c.year) == file_year:
-                            chosen = c
-                            break
-
-                details = await tmdb.get_movie_details(chosen.tmdb_id)
-
-                title_final = details["title"]
-                if series_info.get("is_series"):
-                    title_final = f"{details['title']} - T{series_info['season_number']}E{series_info['episode_number']}"
-
-                movie = models.Movie(
-                    title=title_final,
-                    synopsis=details["synopsis"],
-                    year=details["year"],
-                    genre=details["genre"],
-                    duration_minutes=details["duration_minutes"],
-                    director=details.get("director"),
-                    cast=details.get("cast"),
-                    filename=rel_path,
-                    is_private=False,
-                    is_series=series_info.get("is_series", False),
-                    series_title=series_info.get("series_title") or (details["title"] if series_info.get("is_series") else None),
-                    season_number=series_info.get("season_number"),
-                    episode_number=series_info.get("episode_number"),
-                    collection_name=details.get("collection_name"),
-                    trailer_youtube_id=details.get("trailer_youtube_id"),
-                )
-                db.add(movie)
-                db.commit()
-                db.refresh(movie)
-
-                # Download do Poster
-                if details.get("poster_url"):
-                    try:
-                        img = await tmdb.download_poster(details["poster_url"])
-                        thumb_name = f"movie_{movie.id}.jpg"
-                        with open(os.path.join(MEDIA_THUMBS_DIR, thumb_name), "wb") as f:
-                            f.write(img)
-                        movie.thumbnail_filename = thumb_name
-                    except Exception:
-                        pass
-
-                # Download do Backdrop
-                if details.get("backdrop_url"):
-                    try:
-                        img = await tmdb.download_poster(details["backdrop_url"])
-                        bg_name = f"movie_{movie.id}_bg.jpg"
-                        with open(os.path.join(MEDIA_THUMBS_DIR, bg_name), "wb") as f:
-                            f.write(img)
-                        movie.backdrop_filename = bg_name
-                    except Exception:
-                        pass
-
-                db.commit()
-                db.refresh(movie)
-                added_count += 1
-                results.append({"filename": rel_path, "title": movie.title, "status": "added", "movie_id": movie.id})
-            else:
-                title_final = clean_title.title()
-                if series_info.get("is_series"):
-                    title_final = f"{series_info['series_title']} - T{series_info['season_number']}E{series_info['episode_number']}"
-
-                movie = models.Movie(
-                    title=title_final,
-                    filename=rel_path,
-                    year=file_year,
-                    is_private=False,
-                    is_series=series_info.get("is_series", False),
-                    series_title=series_info.get("series_title"),
-                    season_number=series_info.get("season_number"),
-                    episode_number=series_info.get("episode_number"),
-                )
-                db.add(movie)
-                db.commit()
-                db.refresh(movie)
-                added_count += 1
-                results.append({"filename": rel_path, "title": movie.title, "status": "added_without_tmdb", "movie_id": movie.id})
+            res_item = await _register_local_video_file(rel_path, db=db)
+            added_count += 1
+            results.append(res_item)
         except Exception as e:
             skipped_count += 1
             results.append({"filename": rel_path, "status": "error", "error": str(e)})
@@ -1452,5 +1635,196 @@ async def smart_vod_import(
         is_private=payload.is_private,
         db=db,
     )
+
+
+# ---------------------- Rotas para Puxar Filmes e Pastas do Próprio PC ----------------------
+
+@admin_router.get("/pc/drives")
+def list_pc_drives_and_folders():
+    """Lista os discos rígidos/pendrives conectados ao PC (C:, D:, E:, etc.) e pastas comuns do usuário."""
+    drives = []
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        drv = f"{letter}:\\"
+        if os.path.isdir(drv):
+            drives.append({"label": f"Disco Local ({letter}:)", "path": drv, "type": "drive"})
+
+    user_home = os.path.expanduser("~")
+    common_folders = [
+        ("Vídeos do PC", os.path.join(user_home, "Videos")),
+        ("Downloads", os.path.join(user_home, "Downloads")),
+        ("Área de Trabalho", os.path.join(user_home, "Desktop")),
+        ("Documentos", os.path.join(user_home, "Documents")),
+    ]
+    for label, folder_path in common_folders:
+        if os.path.isdir(folder_path):
+            drives.append({"label": label, "path": folder_path, "type": "folder"})
+
+    return {
+        "current_media_dir": MEDIA_MOVIES_DIR,
+        "locations": drives,
+    }
+
+
+@admin_router.post("/pc/browse-dialog")
+def open_pc_native_dialog(payload: schemas.PCBrowseRequest):
+    """Abre a janela nativa do Windows Explorer no servidor local para escolher um arquivo de vídeo ou pasta."""
+    try:
+        if payload.mode == "folder":
+            ps_script = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                "$f.Description = 'Selecione a pasta ou HD com seus filmes'; "
+                "$f.ShowNewFolderButton = $false; "
+                "if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }"
+            )
+        else:
+            ps_script = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+                "$f.Title = 'Selecione um ou mais arquivos de filme no PC'; "
+                "$f.Filter = 'Arquivos de Vídeo (*.mp4;*.mkv;*.avi;*.webm;*.mov;*.m4v)|*.mp4;*.mkv;*.avi;*.webm;*.mov;*.m4v|Todos os arquivos (*.*)|*.*'; "
+                "$f.Multiselect = $true; "
+                "if ($f.ShowDialog() -eq 'OK') { $f.FileNames -join '|' }"
+            )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Sta", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        out = (proc.stdout or "").strip()
+        if not out:
+            return {"selected": [], "cancelled": True}
+        paths = [p.strip() for p in out.split("|") if p.strip()]
+        return {"selected": paths, "cancelled": False}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Não foi possível abrir o seletor do Windows: {str(e)}")
+
+
+@admin_router.post("/pc/scan-path")
+async def scan_custom_pc_path(
+    payload: schemas.PCScanPathRequest,
+    db: Session = Depends(get_db),
+):
+    """Importa um arquivo de vídeo específico ou varre qualquer pasta/HD do PC (ex: D:\\) sem precisar copiar arquivos."""
+    raw_paths = [p.strip().strip('"') for p in payload.path.split("|") if p.strip()]
+    if not raw_paths:
+        raise HTTPException(status_code=400, detail="Informe o caminho de uma pasta ou arquivo do PC.")
+
+    already_registered = set()
+    for (fname,) in db.query(models.Movie.filename).all():
+        if fname:
+            already_registered.add(fname)
+            already_registered.add(fname.replace("\\", "/"))
+            already_registered.add(os.path.normpath(fname))
+
+    video_files_to_add = []
+    primary_abs = os.path.abspath(MEDIA_MOVIES_DIR) if os.path.isdir(MEDIA_MOVIES_DIR) else None
+
+    for target in raw_paths:
+        norm_target = os.path.abspath(os.path.normpath(target))
+        if os.path.isfile(norm_target):
+            ext = os.path.splitext(norm_target)[1].lower()
+            if ext not in VIDEO_EXTENSIONS and ext not in (".ts", ".wmv", ".flv"):
+                raise HTTPException(status_code=400, detail=f"O arquivo '{os.path.basename(norm_target)}' não é um formato de vídeo suportado.")
+            video_files_to_add.append(norm_target)
+        elif os.path.isdir(norm_target):
+            for root, dirs, filenames in os.walk(norm_target):
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith(".")
+                    and d not in ("$RECYCLE.BIN", "System Volume Information", "Windows", "Program Files", "Program Files (x86)", "AppData", "node_modules", "venv")
+                ]
+                for name in filenames:
+                    if os.path.splitext(name)[1].lower() in VIDEO_EXTENSIONS:
+                        video_files_to_add.append(os.path.abspath(os.path.join(root, name)))
+        else:
+            raise HTTPException(status_code=404, detail=f"Caminho não encontrado no PC: '{target}'")
+
+    results = []
+    added_count = 0
+    skipped_count = 0
+
+    for full_path in video_files_to_add:
+        try:
+            if primary_abs and os.path.commonpath([primary_abs, full_path]) == primary_abs:
+                stored_path = os.path.relpath(full_path, primary_abs).replace(os.sep, "/")
+            else:
+                stored_path = full_path.replace(os.sep, "/")
+        except Exception:
+            stored_path = full_path.replace(os.sep, "/")
+
+        if (
+            stored_path in already_registered
+            or full_path in already_registered
+            or full_path.replace(os.sep, "/") in already_registered
+        ):
+            skipped_count += 1
+            results.append({"filename": stored_path, "title": os.path.basename(full_path), "status": "already_exists"})
+            continue
+
+        try:
+            drive_label = os.path.splitdrive(full_path)[0] or "PC"
+            res_item = await _register_local_video_file(
+                stored_path,
+                db=db,
+                source_name=f"Disco Local ({drive_label})",
+                is_private=payload.is_private,
+            )
+            already_registered.add(stored_path)
+            already_registered.add(full_path)
+            added_count += 1
+            results.append(res_item)
+        except Exception as e:
+            skipped_count += 1
+            results.append({"filename": stored_path, "status": "error", "error": str(e)})
+
+    return {
+        "scanned": len(video_files_to_add),
+        "added": added_count,
+        "skipped": skipped_count,
+        "results": results,
+    }
+
+
+@admin_router.post("/pc/upload-file")
+async def upload_pc_video_file(
+    file: UploadFile = File(...),
+    is_private: bool = Form(False),
+    db: Session = Depends(get_db),
+):
+    """Recebe o upload direto de um arquivo de vídeo do PC/celular pelo navegador e cadastra com TMDB."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Arquivo inválido.")
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Formato '{ext}' não suportado. Use MP4, MKV, AVI, WEBM ou MOV.")
+
+    target_dir = MEDIA_MOVIES_DIR if os.path.isdir(MEDIA_MOVIES_DIR) else os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "movies")
+    os.makedirs(target_dir, exist_ok=True)
+
+    safe_filename = os.path.basename(file.filename)
+    dest_path = os.path.join(target_dir, safe_filename)
+    with open(dest_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer, length=1024 * 1024)
+
+    primary_abs = os.path.abspath(MEDIA_MOVIES_DIR) if os.path.isdir(MEDIA_MOVIES_DIR) else None
+    full_abs = os.path.abspath(dest_path)
+    try:
+        if primary_abs and os.path.commonpath([primary_abs, full_abs]) == primary_abs:
+            stored_path = os.path.relpath(full_abs, primary_abs).replace(os.sep, "/")
+        else:
+            stored_path = full_abs.replace(os.sep, "/")
+    except Exception:
+        stored_path = full_abs.replace(os.sep, "/")
+
+    res_item = await _register_local_video_file(
+        stored_path,
+        db=db,
+        source_name="Upload do PC",
+        is_private=is_private,
+    )
+    return res_item
+
 
 

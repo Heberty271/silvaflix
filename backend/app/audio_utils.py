@@ -45,15 +45,26 @@ LANGUAGE_FLAGS = {
 }
 
 
+_MEDIA_PROBE_CACHE: dict[str, dict] = {}
+
+
 def get_ffmpeg_binary() -> str:
     """Retorna o caminho do executável do FFmpeg embutido."""
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def probe_audio_tracks(file_path: str) -> list[dict]:
-    """Inspeciona o arquivo de vídeo e retorna todas as faixas de áudio disponíveis."""
+def probe_media_info(file_path: str) -> dict:
+    """Inspeciona o arquivo de vídeo (com cache em memória) e retorna codec de vídeo, pixel format e faixas de áudio."""
     if not os.path.isfile(file_path):
-        return []
+        return {"video_codec": None, "pix_fmt": None, "audio_tracks": [], "faststart": False}
+
+    try:
+        mtime = os.path.getmtime(file_path)
+        cache_key = f"{file_path}:{mtime}"
+        if cache_key in _MEDIA_PROBE_CACHE:
+            return _MEDIA_PROBE_CACHE[cache_key]
+    except Exception:
+        cache_key = file_path
 
     ffmpeg_bin = get_ffmpeg_binary()
     cmd = [ffmpeg_bin, "-hide_banner", "-i", file_path]
@@ -62,15 +73,32 @@ def probe_audio_tracks(file_path: str) -> list[dict]:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=10)
         output = res.stderr
     except Exception:
-        return []
+        return {"video_codec": None, "pix_fmt": None, "audio_tracks": [], "faststart": False}
 
-    # Procura por linhas do tipo:
-    # Stream #0:1[0x2](por): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
-    # Metadata:
-    #   title           : Dublado
-    # Stream #0:2[0x3](eng): Audio: ac3 (ac-3 / 0x332D6361), 48000 Hz, 5.1(side), fltp, 384 kb/s
+    # Detecta codec de vídeo e formato de pixel
+    video_codec = None
+    pix_fmt = None
+    v_match = re.search(r"Stream #0:\d+.*?: Video:\s*([a-zA-Z0-9_\-]+)(.*)", output, re.IGNORECASE)
+    if v_match:
+        video_codec = v_match.group(1).lower()
+        rest = v_match.group(2)
+        if "yuv420p10" in rest.lower() or "10le" in rest.lower():
+            pix_fmt = "yuv420p10le"
+        elif "yuv420p" in rest.lower():
+            pix_fmt = "yuv420p"
+
+    # Verifica se MP4 possui átomo moov no cabeçalho (faststart)
+    faststart = False
+    if file_path.lower().endswith(".mp4"):
+        try:
+            with open(file_path, "rb") as f:
+                head = f.read(65536)
+            faststart = (b"ftyp" in head) and (b"moov" in head)
+        except Exception:
+            faststart = False
+
     tracks = []
-    stream_pattern = re.compile(r"Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\(([^)]+)\))?: Audio:\s*([a-zA-Z0-9_\-]+)(?:.*)", re.IGNORECASE)
+    stream_pattern = re.compile(r"Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\(([^)]+)\))?: Audio:\s*([a-zA-Z0-9_\-]+)(.*)", re.IGNORECASE)
 
     lines = output.splitlines()
     audio_index = 0
@@ -81,8 +109,9 @@ def probe_audio_tracks(file_path: str) -> list[dict]:
             stream_id = int(match.group(1))
             lang_raw = (match.group(2) or "und").lower()
             codec = match.group(3).lower()
+            rest_audio = (match.group(4) or "").lower()
+            is_surround = any(ch in rest_audio for ch in ("5.1", "7.1", "side", "quad", "6 channels"))
 
-            # Tenta pegar título da metadata nas linhas seguintes
             title_meta = None
             for next_line in lines[i + 1 : i + 6]:
                 if "Stream #" in next_line:
@@ -108,10 +137,11 @@ def probe_audio_tracks(file_path: str) -> list[dict]:
                 "flag": flag,
                 "title": display_name,
                 "codec": codec,
+                "is_surround": is_surround,
+                "is_default": audio_index == 0,
             })
             audio_index += 1
 
-    # Se não identificou nada específico, retorna pelo menos 1 faixa padrão
     if not tracks:
         tracks.append({
             "index": 0,
@@ -121,7 +151,22 @@ def probe_audio_tracks(file_path: str) -> list[dict]:
             "flag": "🎧",
             "title": "🎧 Áudio Principal",
             "codec": "aac",
+            "is_surround": False,
+            "is_default": True,
         })
 
-    return tracks
+    info = {
+        "video_codec": video_codec,
+        "pix_fmt": pix_fmt,
+        "audio_tracks": tracks,
+        "faststart": faststart,
+    }
+    _MEDIA_PROBE_CACHE[cache_key] = info
+    return info
+
+
+def probe_audio_tracks(file_path: str) -> list[dict]:
+    """Inspeciona o arquivo de vídeo e retorna todas as faixas de áudio disponíveis."""
+    return probe_media_info(file_path).get("audio_tracks", [])
+
 

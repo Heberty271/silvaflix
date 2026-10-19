@@ -25,9 +25,12 @@ export default function AdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Auto-Scan
+  // Auto-Scan & Puxar do Próprio PC
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<AutoScanResponse | null>(null);
+  const [pcLocations, setPcLocations] = useState<Array<{ label: string; path: string; type: string }>>([]);
+  const [customPcPath, setCustomPcPath] = useState("");
+  const [uploadingVideo, setUploadingVideo] = useState(false);
 
   const [form, setForm] = useState({
     title: "",
@@ -57,18 +60,22 @@ export default function AdminPage() {
 
   async function refresh() {
     if (!token) return;
-    const [m, f, u, st, ch] = await Promise.all([
+    const [m, f, u, st, ch, pcInfo] = await Promise.all([
       api.listMovies(token),
       api.availableFiles(token),
       api.listUsers(token),
       api.getAdminStats(token).catch(() => null),
       api.listChannels(token, { limit: 100 }).then((r) => r.items).catch(() => []),
+      api.listPcDrives(token).catch(() => null),
     ]);
     setMovies(m);
     setAvailableFiles(f);
     setUsers(u);
     setStats(st);
     setChannels(ch);
+    if (pcInfo?.locations) {
+      setPcLocations(pcInfo.locations);
+    }
   }
 
   async function handleDeleteLiveChannel(id: number) {
@@ -115,6 +122,59 @@ export default function AdminPage() {
       setError(err instanceof ApiError ? err.message : "Erro ao escanear pasta");
     } finally {
       setScanning(false);
+    }
+  }
+
+  async function handleScanPcPath(targetPath: string) {
+    if (!token || !targetPath.trim()) return;
+    setError(null);
+    setMessage(null);
+    setScanning(true);
+    try {
+      const res = await api.scanPcPath(targetPath.trim(), token, false);
+      setScanResult(res);
+      setMessage(
+        `Leitura do PC concluída! ${res.added} novo(s) filme(s) importado(s) com sucesso (${res.scanned} arquivo(s) encontrado(s)).`
+      );
+      setCustomPcPath("");
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao puxar filme/pasta do PC");
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function handleBrowseWindowsDialog(mode: "file" | "folder") {
+    if (!token) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const dlg = await api.browsePcDialog(mode, token);
+      if (!dlg.cancelled && dlg.selected.length > 0) {
+        const joined = dlg.selected.join("|");
+        await handleScanPcPath(joined);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Não foi possível abrir a janela do Windows");
+    }
+  }
+
+  async function handleUploadPcVideo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!token || !file) return;
+    setError(null);
+    setMessage(null);
+    setUploadingVideo(true);
+    try {
+      const res = await api.uploadPcVideo(file, token, false);
+      setMessage(`Filme "${res.title || file.name}" enviado do PC e cadastrado com sucesso!`);
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Erro ao enviar vídeo do PC");
+    } finally {
+      setUploadingVideo(false);
+      e.target.value = "";
     }
   }
 
@@ -357,6 +417,90 @@ export default function AdminPage() {
                     <span>Escanear Novos Filmes</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+
+          {/* Painel Puxar Filme / Pasta do Próprio PC */}
+          <div className="mt-5 rounded-xl border border-rule bg-panel2/60 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-black text-ink flex items-center gap-2">
+                  <span>💻</span>
+                  <span>Puxar Filmes do Próprio PC (Disco D:, Pastas ou Arquivos)</span>
+                </h3>
+                <p className="text-[11px] text-mute">
+                  Escolha qualquer vídeo ou pasta do seu computador sem precisar copiar arquivos pesados, ou envie direto pelo navegador.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleBrowseWindowsDialog("file")}
+                  disabled={scanning}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-emerald-500 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  <span>📂</span>
+                  <span>Escolher Vídeo(s) no PC</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBrowseWindowsDialog("folder")}
+                  disabled={scanning}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow hover:bg-amber-500 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  <span>📁</span>
+                  <span>Escolher Pasta / HD no PC</span>
+                </button>
+                <label className="flex items-center gap-1.5 rounded-xl border border-brand/50 bg-brand/15 px-3.5 py-2 text-xs font-bold text-ink hover:bg-brand hover:text-white transition-all cursor-pointer">
+                  <span>⬆️</span>
+                  <span>{uploadingVideo ? "Enviando..." : "Upload pelo Navegador"}</span>
+                  <input
+                    type="file"
+                    accept="video/*,.mkv,.avi,.mp4,.webm,.mov"
+                    onChange={handleUploadPcVideo}
+                    disabled={uploadingVideo}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {pcLocations.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-mute">
+                  Atalhos do PC:
+                </span>
+                {pcLocations.map((loc) => (
+                  <button
+                    key={loc.path}
+                    type="button"
+                    onClick={() => handleScanPcPath(loc.path)}
+                    disabled={scanning}
+                    className="flex items-center gap-1.5 rounded-lg border border-rule bg-panel px-2.5 py-1 text-xs font-semibold text-ink hover:border-brand hover:text-brand2 transition-all cursor-pointer"
+                  >
+                    <span>{loc.type === "drive" ? "💽" : "📁"}</span>
+                    <span>{loc.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                value={customPcPath}
+                onChange={(e) => setCustomPcPath(e.target.value)}
+                placeholder="Ou digite o caminho da pasta/arquivo no PC (Ex: D:\ ou C:\Users\Heberty Silva\Videos)"
+                className="flex-1 rounded-xl border border-rule bg-panel px-3 py-2 text-xs text-ink placeholder-mute focus:border-brand focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => handleScanPcPath(customPcPath)}
+                disabled={scanning || !customPcPath.trim()}
+                className="rounded-xl bg-brand px-4 py-2 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
+              >
+                Importar Caminho
               </button>
             </div>
           </div>

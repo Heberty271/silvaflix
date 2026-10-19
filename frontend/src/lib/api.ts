@@ -12,6 +12,27 @@ export async function syncApiUrl(force = false): Promise<string> {
   }
 
   if (typeof window !== "undefined") {
+    // 1. Se estiver no próprio PC (ou se localhost:8000 responder), prioriza conexão local direta (velocidade máxima e zero queda de túnel)
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1500);
+      const localRes = await fetch("http://localhost:8000/health", {
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
+      clearTimeout(timer);
+      if (localRes.ok) {
+        const localClean = "http://localhost:8000";
+        localStorage.setItem(STORAGE_KEY, localClean);
+        cachedUrl = localClean;
+        lastSyncTime = now;
+        return localClean;
+      }
+    } catch {
+      // localhost:8000 não acessível neste dispositivo (ex: celular/TV fora de casa)
+    }
+
+    // 2. Caso contrário, busca o túnel ativo no npoint.io
     try {
       const res = await fetch(NPOINT_URL, {
         headers: { "bypass-tunnel-reminder": "true" },
@@ -33,6 +54,10 @@ export async function syncApiUrl(force = false): Promise<string> {
   }
 
   if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      cachedUrl = "http://localhost:8000";
+      return cachedUrl;
+    }
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
       cachedUrl = local;
@@ -47,6 +72,9 @@ export async function syncApiUrl(force = false): Promise<string> {
 export function getApiUrl(): string {
   if (cachedUrl) return cachedUrl;
   if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return "http://localhost:8000";
+    }
     const local = localStorage.getItem(STORAGE_KEY);
     if (local) {
       cachedUrl = local;
@@ -1087,7 +1115,49 @@ export const api = {
       { method: "POST", body: JSON.stringify(payload) },
       token
     ),
+
+  // --- Puxar Filmes e Pastas do Próprio PC ---
+  listPcDrives: (token: string) =>
+    request<{
+      current_media_dir: string;
+      locations: Array<{ label: string; path: string; type: string }>;
+    }>("/admin/pc/drives", {}, token),
+
+  browsePcDialog: (mode: "file" | "folder", token: string) =>
+    request<{ selected: string[]; cancelled: boolean }>(
+      "/admin/pc/browse-dialog",
+      { method: "POST", body: JSON.stringify({ mode }) },
+      token
+    ),
+
+  scanPcPath: (path: string, token: string, is_private = false) =>
+    request<AutoScanResponse>(
+      "/admin/pc/scan-path",
+      { method: "POST", body: JSON.stringify({ path, is_private }) },
+      token
+    ),
+
+  uploadPcVideo: async (file: File, token: string, is_private = false) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("is_private", String(is_private));
+    const res = await fetch(`${getApiUrl()}/admin/pc/upload-file`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      let msg = "Erro ao enviar vídeo do PC";
+      try {
+        const err = await res.json();
+        msg = err.detail || msg;
+      } catch {}
+      throw new ApiError(msg, res.status);
+    }
+    return res.json();
+  },
 };
 
 export { ApiError };
+
 

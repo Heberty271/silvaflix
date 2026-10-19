@@ -92,34 +92,46 @@ def clean_messy_title(raw_name: str) -> tuple[str, Optional[int]]:
     # Remove blocos entre colchetes [...] e chaves {...} (geralmente propaganda de site ou tags)
     text = re.sub(r"\[[^\]]*\]", " ", text)
     text = re.sub(r"\{[^\}]*\}", " ", text)
-    # Remove parênteses que contenham gêneros/tags ou ano
+
+    # Remove domínios de sites de torrent (ex: WOLVERDONFILMES.COM, YTSBR.COM, THE PIRATE FILMES)
+    text = re.sub(r"\b[a-z0-9_-]+\.(?:com|net|org|me|to|la|br|tv|cc|site)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+-\s+(?:the\s+pirate\s+filmes|andretpf|by[_\s]+[a-z0-9_]+|[a-z0-9_]{3,15})\s*$", " ", text, flags=re.IGNORECASE)
+
+    # Se encontrou ano no meio/fim do nome (inclusive entre parênteses), corta o que vier depois do ano
+    if year:
+        yr_pos = re.search(rf"[\(\s\._-]{year}[\)\s\._-]|[\(\s\._-]{year}$", text)
+        if yr_pos and yr_pos.start() > 2:
+            # Mantém "2000" se fizer parte de "Filme 2000" e houver outro ano (ex: 1999)
+            all_years = list(re.finditer(r"(?:^|[\s\.\(\[\{'\"_-])(19\d\d|20\d\d)(?:$|[\s\.\)\]\}'\"_-])", text))
+            cut_match = all_years[-1] if len(all_years) > 1 else yr_pos
+            if len(all_years) > 1:
+                year = int(all_years[-1].group(1))
+            if cut_match.start() > 2:
+                text = text[: cut_match.start()]
+
+    # Remove parênteses remanescentes
     text = re.sub(r"\([^\)]*\)", " ", text)
 
     # Remove aspas simples repetidas '' e símbolos #
     text = text.replace("''", " ").replace('"', " ").replace("#", " ")
 
-    # Se encontrou ano no meio do nome, corta tudo que vier depois do ano (geralmente tags de release)
-    if year:
-        yr_pos = re.search(rf"\b{year}\b", text)
-        if yr_pos and yr_pos.start() > 2:
-            text = text[: yr_pos.start()]
-
     # Remove grupo de release no final tipo '- By_Sloth'
     text = re.sub(r"\bby[\s_]+[a-z0-9_]+.*$", " ", text, flags=re.IGNORECASE)
 
-    # Tags comuns de torrent/arquivos
+    # Tags comuns de torrent/arquivos (corta a partir da primeira tag técnica encontrada)
+    cutoff_tags = r"\b(?:1080p|720p|480p|2160p|4k|bluray|bdrip|brrip|dvdrip|hdrip|web-?dl|webrip|hdtv|camrip|hdts|fullscreen|widescreen|dual(?:\s*audio)?|dublado|legendado|nacional)\b"
+    cutoff_m = re.search(cutoff_tags, text, flags=re.IGNORECASE)
+    if cutoff_m and cutoff_m.start() > 2:
+        text = text[: cutoff_m.start()]
+
     tags = [
-        r"\b1080p\b", r"\b720p\b", r"\b480p\b", r"\b2160p\b", r"\b4k\b",
-        r"\bbluray\b", r"\bbdrip\b", r"\bbrrip\b", r"\bdvdrip\b", r"\bhdrip\b",
-        r"\bweb-?dl\b", r"\bwebrip\b", r"\bhdtv\b", r"\bcamrip\b", r"\bhdts\b",
         r"\bh\.?264\b", r"\bx\.?264\b", r"\bh\.?265\b", r"\bx\.?265\b", r"\bhevc\b",
         r"\b10bit\b", r"\b8bit\b", r"\bhdr\b", r"\bdv\b",
-        r"\bdual(?:\s*audio)?\b", r"\bdublado\b", r"\blegendado\b", r"\bnacional\b",
         r"\bpt-?br\b", r"\bpt-?eng\b", r"\bportugues\b", r"\bingles\b",
         r"\baac\d*(?:\.\d)?\b", r"\bac3\b", r"\bdts\b", r"\bddp?\d*(?:\.\d)?\b", r"\b5\.1\b", r"\b2\.0\b",
-        r"\byify\b", r"\byts(?:\.[a-z]+)?\b", r"\brarbg\b", r"\bimax\b", r"\brepack\b", r"\bextended\b",
+        r"\byify\b", r"\byts[a-z]*\b", r"\brarbg\b", r"\bimax\b", r"\brepack\b", r"\bextended\b",
         r"\bs\d{1,2}e\d{1,3}\b", r"\b\d{1,2}x\d{1,3}\b", r"\+?\s*srt\b",
-        r"\bcomando\.[a-z]+\b", r"\bhd-elite\.[a-z]+\b", r"\bbludv\b",
+        r"\bcomando\b", r"\bhd-elite\b", r"\bbludv\b",
     ]
     for tag in tags:
         text = re.sub(tag, " ", text, flags=re.IGNORECASE)
