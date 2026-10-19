@@ -88,6 +88,7 @@ class MovieOut(BaseModel):
     video_url: Optional[str] = None
     is_external: bool = False
     source_name: Optional[str] = None
+    duration_seconds: Optional[float] = None
 
     created_at: datetime
 

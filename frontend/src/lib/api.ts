@@ -108,6 +108,7 @@ export interface Movie {
   year?: number | null;
   genre?: string | null;
   duration_minutes?: number | null;
+  duration_seconds?: number | null;
   director?: string | null;
   cast?: string | null;
   filename: string;
@@ -618,11 +619,14 @@ export const api = {
     return `${getApiUrl()}/movies/${id}/stream?token=${encodeURIComponent(token)}`;
   },
 
-  streamUrl: (id: number, token?: string | null, audioTrack?: number) => {
+  streamUrl: (id: number, token?: string | null, audioTrack?: number, start?: number) => {
     const params = new URLSearchParams();
     if (token) params.set("token", token);
     if (typeof audioTrack === "number" && audioTrack > 0) {
       params.set("audio_track", String(audioTrack));
+    }
+    if (typeof start === "number" && start > 0) {
+      params.set("start", String(Math.floor(start)));
     }
     const qs = params.toString();
     return `${getApiUrl()}/movies/${id}/stream${qs ? `?${qs}` : ""}`;

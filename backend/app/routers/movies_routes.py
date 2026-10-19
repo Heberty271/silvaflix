@@ -82,6 +82,9 @@ def _resolve_media_path(filename: str) -> str:
         os.path.abspath(MEDIA_MOVIES_DIR),
         "D:\\",
         "E:\\",
+        "H:\\",
+        "F:\\",
+        "G:\\",
         os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "movies")),
     ]
     for root_dir in search_roots:
@@ -215,12 +218,17 @@ def get_movie(movie_id: int, db: Session = Depends(get_db), current_user: models
     if not movie.is_external and movie.filename and not movie.filename.startswith("http"):
         file_path = _resolve_media_path(movie.filename)
         if _safe_isfile(file_path):
-            # Disco local (D:\) está conectado e o arquivo existe: usa reprodução direta do PC
+            # Disco local está conectado e o arquivo existe: usa reprodução direta do PC
             out.video_url = None
             out.is_external = False
+            info = probe_media_info(file_path)
+            if info.get("duration_seconds"):
+                out.duration_seconds = info["duration_seconds"]
         elif movie.video_url:
-            # Disco local (D:\) desconectado/ausente: ativa automaticamente os servidores em nuvem PT-BR
+            # Disco local desconectado/ausente: ativa automaticamente os servidores em nuvem PT-BR
             out.is_external = True
+    if not out.duration_seconds and movie.duration_minutes:
+        out.duration_seconds = float(movie.duration_minutes * 60)
     return out
 
 
@@ -506,14 +514,20 @@ def stream_movie(
                 except Exception:
                     pass
 
+        stream_headers = {
+            "Accept-Ranges": "none",
+            "Cache-Control": "no-store",
+            "Access-Control-Expose-Headers": "X-Content-Duration",
+        }
+        exact_duration = media_info.get("duration_seconds") or (float(movie.duration_minutes * 60) if movie.duration_minutes else None)
+        if exact_duration:
+            stream_headers["X-Content-Duration"] = str(exact_duration)
+
         return StreamingResponse(
             iter_ffmpeg(),
             status_code=200,
             media_type="video/mp4",
-            headers={
-                "Accept-Ranges": "none",
-                "Cache-Control": "no-store",
-            },
+            headers=stream_headers,
         )
 
     # Streaming padrão por Range Requests

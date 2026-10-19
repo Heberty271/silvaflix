@@ -18,6 +18,22 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+export function buildStreamUrlWithStart(currentUrl: string, startSecs: number): string {
+  try {
+    const urlObj = new URL(currentUrl, typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
+    if (startSecs > 0) {
+      urlObj.searchParams.set("start", Math.floor(startSecs).toString());
+    } else {
+      urlObj.searchParams.delete("start");
+    }
+    return urlObj.toString();
+  } catch {
+    const cleanUrl = currentUrl.replace(/([?&])start=[^&]*(&|$)/, "$1").replace(/[?&]$/, "");
+    const sep = cleanUrl.includes("?") ? "&" : "?";
+    return startSecs > 0 ? `${cleanUrl}${sep}start=${Math.floor(startSecs)}` : cleanUrl;
+  }
+}
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export function extractGoogleDriveFileId(url: string): string | null {
@@ -223,9 +239,26 @@ export function VideoPlayer({
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
 
+  const movieDurationSecs = (movie?.duration_seconds && movie.duration_seconds > 0)
+    ? movie.duration_seconds
+    : ((movie?.duration_minutes && movie.duration_minutes > 0) ? movie.duration_minutes * 60 : 0);
+
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const currentRef = useRef(0);
+  currentRef.current = current;
+  const [duration, setDuration] = useState(movieDurationSecs || 0);
+  const [streamStartTime, setStreamStartTime] = useState(0);
+  const streamStartTimeRef = useRef(0);
+  streamStartTimeRef.current = streamStartTime;
+  const isDraggingTimeline = useRef(false);
+  const pendingSeekPositionRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (movieDurationSecs > 0) {
+      setDuration((prev) => (prev <= 60 || prev === 0 ? movieDurationSecs : prev));
+    }
+  }, [movieDurationSecs]);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [buffered, setBuffered] = useState(0);
@@ -502,6 +535,38 @@ export function VideoPlayer({
   const currentActiveEmbedUrl = selectedEmbedUrl || activeEmbedUrl;
   const isCurrentUrlDrive = currentActiveEmbedUrl?.includes("drive.google.com");
 
+  const seekTo = useCallback(
+    (targetSeconds: number) => {
+      const video = videoRef.current;
+      if (!video || isEmbed) return;
+
+      const total = duration > 0 ? duration : (movieDurationSecs || 0);
+      const clamped = Math.max(0, Math.min(targetSeconds, total > 1 ? total - 1 : targetSeconds));
+
+      const isStreamEndpoint =
+        typeof video.src === "string" &&
+        (video.src.includes("/stream") || (src && src.includes("/stream")));
+
+      if (isStreamEndpoint) {
+        setLoading(true);
+        setStreamStartTime(clamped);
+        streamStartTimeRef.current = clamped;
+        setCurrent(clamped);
+        currentRef.current = clamped;
+
+        const targetUrl = buildStreamUrlWithStart(video.src || src, clamped);
+        video.src = targetUrl;
+        video.load();
+        video.play().catch(() => {});
+      } else {
+        video.currentTime = clamped;
+        setCurrent(clamped);
+        currentRef.current = clamped;
+      }
+    },
+    [duration, movieDurationSecs, isEmbed, src]
+  );
+
   // --- Inicialização de Fonte HLS ou Vídeo Direto ---
   useEffect(() => {
     if (isEmbed) {
@@ -511,6 +576,11 @@ export function VideoPlayer({
 
     const video = videoRef.current;
     if (!video || !src) return;
+
+    if (pendingSeekPositionRef.current === null) {
+      setStreamStartTime(0);
+      streamStartTimeRef.current = 0;
+    }
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -564,31 +634,58 @@ export function VideoPlayer({
     if (!video) return;
 
     const onTime = () => {
-      setCurrent(video.currentTime);
+      if (isDraggingTimeline.current) return;
+      const effectiveTime = streamStartTimeRef.current + video.currentTime;
+      setCurrent(effectiveTime);
+      currentRef.current = effectiveTime;
       const now = Date.now();
       if (now - lastSavedAt.current > 4000) {
         lastSavedAt.current = now;
-        saveProgress(movieId, video.currentTime, video.duration);
+        saveProgress(movieId, effectiveTime, duration);
       }
     };
     const onLoaded = () => {
-      setDuration(video.duration);
+      const movieSecs = (movie?.duration_seconds && movie.duration_seconds > 0)
+        ? movie.duration_seconds
+        : ((movie?.duration_minutes && movie.duration_minutes > 0) ? movie.duration_minutes * 60 : 0);
+
+      // Se video.duration for confiável (> 60s), usa ela. Se for estimativa curta de fragmento (ex: 10s), usa a duração real do filme!
+      if (isFinite(video.duration) && video.duration > 60 && (!movieSecs || Math.abs(video.duration - movieSecs) < movieSecs * 0.4)) {
+        setDuration(video.duration);
+      } else if (movieSecs > 0) {
+        setDuration(movieSecs);
+      } else if (isFinite(video.duration) && video.duration > 0) {
+        setDuration(video.duration);
+      }
+
       setLoading(false);
-      const saved = getProgress(movieId);
-      if (saved && saved.currentTime > 5 && saved.currentTime < video.duration - 10) {
-        setResumeBanner(saved.currentTime);
+
+      if (pendingSeekPositionRef.current !== null && pendingSeekPositionRef.current > 0) {
+        const resumePos = pendingSeekPositionRef.current;
+        pendingSeekPositionRef.current = null;
+        seekTo(resumePos);
+        return;
+      }
+
+      if (streamStartTimeRef.current === 0) {
+        const saved = getProgress(movieId);
+        const total = movieSecs || video.duration || 0;
+        if (saved && saved.currentTime > 5 && saved.currentTime < total - 10) {
+          setResumeBanner(saved.currentTime);
+        }
       }
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => {
       setPlaying(false);
-      saveProgress(movieId, video.currentTime, video.duration);
+      const effectiveTime = streamStartTimeRef.current + video.currentTime;
+      saveProgress(movieId, effectiveTime, duration);
     };
     const onWaiting = () => setLoading(true);
     const onPlaying = () => setLoading(false);
     const onProgress = () => {
       if (video.buffered.length > 0) {
-        setBuffered(video.buffered.end(video.buffered.length - 1));
+        setBuffered(streamStartTimeRef.current + video.buffered.end(video.buffered.length - 1));
       }
     };
     const onError = () => {
@@ -620,7 +717,7 @@ export function VideoPlayer({
       );
     };
     const onEnded = () => {
-      saveProgress(movieId, video.duration, video.duration);
+      saveProgress(movieId, duration, duration);
       if (nextEpisodeRef.current) {
         routerRef.current.push(`/watch/${nextEpisodeRef.current.id}`);
       }
@@ -708,16 +805,12 @@ export function VideoPlayer({
   const skip = useCallback(
     (delta: number) => {
       if (screenLocked || isEmbed) return;
-      const video = videoRef.current;
-      if (!video) return;
-      video.currentTime = Math.min(
-        Math.max(0, video.currentTime + delta),
-        video.duration || 0
-      );
+      const target = currentRef.current + delta;
+      seekTo(target);
       setRippleAction(delta > 0 ? "forward" : "backward");
       setTimeout(() => setRippleAction(null), 600);
     },
-    [screenLocked, isEmbed]
+    [screenLocked, isEmbed, seekTo]
   );
 
   function handleTouchStart(e: React.TouchEvent) {
@@ -740,11 +833,9 @@ export function VideoPlayer({
   }
 
   function seek(e: React.ChangeEvent<HTMLInputElement>) {
-    const video = videoRef.current;
-    if (!video) return;
     const value = Number(e.target.value);
-    video.currentTime = value;
     setCurrent(value);
+    currentRef.current = value;
   }
 
   function handleTimelineMouseMove(e: React.MouseEvent<HTMLDivElement>) {
@@ -799,24 +890,18 @@ export function VideoPlayer({
   function resumeFromSaved() {
     const video = videoRef.current;
     if (!video || resumeBanner === null) return;
-    video.currentTime = resumeBanner;
+    const target = resumeBanner;
     setResumeBanner(null);
-    video.play().catch(() => {});
+    seekTo(target);
   }
 
   function selectAudio(trackIndex: number) {
-    const video = videoRef.current;
-    const savedTime = video ? video.currentTime : 0;
+    const currentPos = streamStartTimeRef.current + (videoRef.current ? videoRef.current.currentTime : 0);
     setShowAudioMenu(false);
+    pendingSeekPositionRef.current = currentPos;
     if (onAudioTrackChange) {
       onAudioTrackChange(trackIndex);
     }
-    setTimeout(() => {
-      if (videoRef.current) {
-        videoRef.current.currentTime = savedTime;
-        videoRef.current.play().catch(() => {});
-      }
-    }, 200);
   }
 
   // --- atalhos de teclado e TV ---
@@ -1230,11 +1315,29 @@ export function VideoPlayer({
               type="range"
               min={0}
               max={duration || 0}
-              step={0.1}
+              step={1}
               value={current}
+              onMouseDown={() => {
+                isDraggingTimeline.current = true;
+              }}
+              onTouchStart={() => {
+                isDraggingTimeline.current = true;
+              }}
               onChange={seek}
+              onMouseUp={(e) => {
+                isDraggingTimeline.current = false;
+                seekTo(Number((e.target as HTMLInputElement).value));
+              }}
+              onTouchEnd={(e) => {
+                isDraggingTimeline.current = false;
+                seekTo(Number((e.target as HTMLInputElement).value));
+              }}
+              onKeyUp={(e) => {
+                isDraggingTimeline.current = false;
+                seekTo(Number((e.target as HTMLInputElement).value));
+              }}
               aria-label="Linha do tempo"
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 z-10"
             />
           </div>
 

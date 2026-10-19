@@ -155,11 +155,22 @@ def probe_media_info(file_path: str) -> dict:
             "is_default": True,
         })
 
+    # Detecta duração exata em segundos
+    duration_seconds = None
+    dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if dur_match:
+        try:
+            h, m, s = dur_match.groups()
+            duration_seconds = round(int(h) * 3600 + int(m) * 60 + float(s), 2)
+        except Exception:
+            pass
+
     info = {
         "video_codec": video_codec,
         "pix_fmt": pix_fmt,
         "audio_tracks": tracks,
         "faststart": faststart,
+        "duration_seconds": duration_seconds,
     }
     _MEDIA_PROBE_CACHE[cache_key] = info
     return info

@@ -28,6 +28,14 @@ CLOUDFLARED_PATH = os.path.join(BASE_DIR, "bin", "cloudflared.exe")
 processes = []
 backend_logs = deque(maxlen=100)
 
+def safe_input(prompt: str = ""):
+    try:
+        if sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+            return input(prompt)
+    except Exception:
+        pass
+    return ""
+
 def kill_process_on_port(port: int = 8000):
     """Encerra qualquer processo antigo travado na porta especificada antes de iniciar"""
     if os.name == "nt":
@@ -145,14 +153,14 @@ def main():
         for line in list(backend_logs):
             print(line)
         print("-" * 65)
-        input("\nPressione Enter para sair...")
+        safe_input("\nPressione Enter para sair...")
         cleanup()
 
     print("[2/3] Conectando ao Cloudflare Tunnel...")
 
     if not os.path.exists(CLOUDFLARED_PATH):
         print(f"[ERRO] Executável do Cloudflare não encontrado em: {CLOUDFLARED_PATH}")
-        input("\nPressione Enter para sair...")
+        safe_input("\nPressione Enter para sair...")
         cleanup()
 
     # 2. Inicia o Cloudflare Tunnel e captura o link
@@ -212,13 +220,13 @@ def main():
                 print(f"\n[!] O backend encerrou inesperadamente (código {backend_proc.poll()}):")
                 for line in list(backend_logs)[-20:]:
                     print("   " + line)
-                input("\nPressione Enter para fechar...")
+                safe_input("\nPressione Enter para fechar...")
                 break
             if cf_proc.poll() is not None:
                 print(f"\n[!] O túnel Cloudflare encerrou (código {cf_proc.poll()}):")
                 for line in list(cf_logs)[-20:]:
                     print("   " + line)
-                input("\nPressione Enter para fechar...")
+                safe_input("\nPressione Enter para fechar...")
                 break
     except KeyboardInterrupt:
         pass
